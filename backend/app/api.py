@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -56,3 +57,23 @@ class DocumentMetadata(BaseModel):
     status: str
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+class ExtractionField(BaseModel):
+    name: str
+    value: str
+    confidence: float = Field(ge=0, le=1)
+    source: str
+
+
+class ExtractionResponse(BaseModel):
+    schema_version: str
+    status: str
+    filename: str
+    content_type: str
+    pages: int = Field(ge=1)
+    engine: str
+    extracted_at: str
+    text: str
+    fields: list[ExtractionField]
+    warning: str

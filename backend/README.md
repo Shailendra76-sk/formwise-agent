@@ -1,20 +1,22 @@
 # Formwise Backend
 
-Phase 2 implements the profile and private document-vault foundation used by the future form-filling agent.
+Phase 3 adds document intelligence on top of the secure profile/document-vault foundation.
 
-## Included
+## Phase 3 included
 
-- FastAPI API foundation and health endpoint
-- User profile CRUD boundary
-- Address and education storage boundaries
-- Private document upload, metadata, download, and soft-delete
-- Per-user ownership checks on every protected resource query
-- Filename, MIME-type/extension, and upload-size validation
-- SHA-256 integrity fingerprint for every uploaded document
-- Private filesystem storage with path-traversal protection and no public URLs
-- Audit records for profile/document/address/education actions
-- Alembic migration for the complete Phase 2 schema
-- Unit tests for upload/storage security and integration tests for profile isolation and document IDOR protection
+- FastAPI profile/address/education/document APIs
+- Private document upload, download, listing, and soft-delete
+- Ownership checks and IDOR protection
+- SHA-256 integrity metadata
+- PDF text extraction with PyMuPDF
+- Scanned-PDF OCR fallback with Tesseract
+- Image OCR for JPEG/PNG/WEBP with Tesseract
+- Deterministic structured-field extraction for common identity/contact fields
+- Per-field confidence and source metadata
+- Private JSON persistence for extraction artifacts
+- Re-extraction endpoint and extraction-result retrieval
+- Explicit failure when OCR dependencies/engine are unavailable; no invented values
+- Unit and integration/security tests
 
 ## Run locally
 
@@ -30,9 +32,17 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-Health check: `GET /health`
+For image/scanned-PDF OCR, install the Tesseract system executable and ensure `tesseract` is on PATH. PDF text extraction does not require Tesseract when the PDF contains a real text layer.
 
-Protected endpoints currently use the temporary `X-User-ID` identity adapter. This is intentionally not production authentication. A verified session/JWT adapter must replace it before real users or sensitive production data are enabled.
+### Extraction API
+
+1. Upload: `POST /v1/documents`
+2. Extract: `POST /v1/documents/{document_id}/extract`
+3. Read saved result: `GET /v1/documents/{document_id}/extraction`
+
+The extraction result contains raw text plus structured fields with confidence and source. It is an input to later agent/review phases, not an authoritative identity record. The product must require verification before consequential form submission.
+
+Protected endpoints currently use the temporary `X-User-ID` identity adapter. This is intentionally not production authentication and must be replaced by verified session/JWT authentication before production use.
 
 ## Tests
 
@@ -41,6 +51,6 @@ cd backend
 pytest -q
 ```
 
-## Phase 2 intentionally excludes
+## Safety boundary
 
-OCR, embeddings, LLM reasoning, Playwright browser automation, form detection/mapping, OTP/CAPTCHA handling, payments, legal declarations, and final form submission. Those belong to later phases and must not be implemented by bypassing website security controls.
+OCR and extraction never bypass CAPTCHA, anti-bot controls, OTP, payments, legal declarations, or final submission. Missing or uncertain data is surfaced rather than guessed.
