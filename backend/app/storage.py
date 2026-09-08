@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 
 class PrivateStorage:
-    """Minimal storage boundary; public URLs are deliberately unsupported."""
+    """Private per-user filesystem boundary; no public URLs are exposed."""
 
     def __init__(self, root: str) -> None:
         self.root = Path(root).resolve()
@@ -29,3 +30,9 @@ class PrivateStorage:
         path = self.key_path(user_id, storage_key)
         if path.exists():
             path.unlink()
+
+    def save_json(self, user_id: str, storage_key: str, payload: dict) -> Path:
+        return self.save(user_id, storage_key, json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
+
+    def read_json(self, user_id: str, storage_key: str) -> dict:
+        return json.loads(self.read(user_id, storage_key).decode("utf-8"))
