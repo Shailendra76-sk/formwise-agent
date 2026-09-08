@@ -9,6 +9,7 @@ from app.form_mapping_routes import router as form_mapping_router
 from app.knowledge_routes import router as knowledge_router
 from app.routes import router
 from app.security import validate_production_security
+from app.health_security import security_status
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -27,3 +28,6 @@ app.include_router(e2e_router)
 
 @app.get('/health',tags=['system'])
 async def health()->dict[str,str]: return {'status':'ok','service':'formwise-api'}
+
+@app.get('/health/security',tags=['system'])
+async def security_health()->dict: return security_status()
