@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import date
-from pydantic import BaseModel, Field
+from datetime import date, datetime
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProfileUpdate(BaseModel):
@@ -10,6 +10,13 @@ class ProfileUpdate(BaseModel):
     gender: str | None = Field(default=None, max_length=50)
     email: str | None = Field(default=None, max_length=320)
     phone: str | None = Field(default=None, max_length=30)
+
+
+class ProfileResponse(ProfileUpdate):
+    user_id: str
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AddressCreate(BaseModel):
@@ -22,6 +29,11 @@ class AddressCreate(BaseModel):
     country: str = Field(default="India", max_length=100)
 
 
+class AddressResponse(AddressCreate):
+    id: str
+    model_config = ConfigDict(from_attributes=True)
+
+
 class EducationCreate(BaseModel):
     qualification: str = Field(min_length=1, max_length=150)
     institution: str | None = Field(default=None, max_length=200)
@@ -30,9 +42,17 @@ class EducationCreate(BaseModel):
     percentage_or_cgpa: str | None = Field(default=None, max_length=50)
 
 
+class EducationResponse(EducationCreate):
+    id: str
+    model_config = ConfigDict(from_attributes=True)
+
+
 class DocumentMetadata(BaseModel):
+    id: str
     original_filename: str
     content_type: str
     size_bytes: int
     sha256: str
     status: str
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
