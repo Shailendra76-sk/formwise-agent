@@ -8,9 +8,11 @@ from app.form_execution_routes import router as e2e_router
 from app.form_mapping_routes import router as form_mapping_router
 from app.knowledge_routes import router as knowledge_router
 from app.routes import router
+from app.security import validate_production_security
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validate_production_security()
     yield
     await close_all_sessions()
 
