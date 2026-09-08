@@ -7,7 +7,7 @@ from app.form_mapping import map_controls
 from app.knowledge_base import load_user_index
 from app.storage import PrivateStorage
 
-BLOCKED_TERMS={"captcha","recaptcha","hcaptcha","otp","one time password","payment","pay now","submit","final submission","declaration","i agree"}
+BLOCKED_TERMS={"captcha","recaptcha","hcaptcha","otp","one time password","payment","pay now","final submission","declaration","i agree"}
 
 def _blocked_page(inspection:dict[str,Any])->list[str]:
     hay=(inspection.get("title","")+" "+inspection.get("url","")+" "+" ".join(str(c.get("text", "")) for c in inspection.get("controls",[]))).lower()
@@ -34,13 +34,11 @@ async def plan_form(user_id:str,session_id:str,instruction:str,storage:PrivateSt
         value=_resolve_value(field,chunks)
         if value:
             proposals.append({**value,"index":mapping["index"],"requires_approval":field in SENSITIVE_FIELDS,"reason":mapping.get("reason")})
-    if blocked:
-        status="blocked"
-    elif proposals:
-        status="ready"
-    else:
-        status="needs_clarification"
-    return {"status":status,"instruction":instruction,"session_id":session_id,"url":inspection["url"],"title":inspection["title"],"mappings":mappings,"proposals":proposals,"blocked_signals":blocked,"submission_allowed":False,"warnings":["This plan fills only deterministic, mapped fields with stored values.","No value is invented.","Sensitive fields require explicit approval.","CAPTCHA, OTP, payment, declarations and final submission are never automated."]}
+    fills=[dict(item) for item in proposals]
+    if blocked:status="blocked"
+    elif proposals:status="ready"
+    else:status="needs_clarification"
+    return {"status":status,"instruction":instruction,"session_id":session_id,"url":inspection["url"],"title":inspection["title"],"mappings":mappings,"proposals":proposals,"fills":fills,"blocked_signals":blocked,"submission_allowed":False,"warnings":["Only deterministic mapped fields with stored values are proposed.","No value is invented.","Sensitive fields require explicit approval.","CAPTCHA, OTP, payment, declarations and final submission are never automated."]}
 
 async def execute_form(user_id:str,session_id:str,fills:list[dict[str,Any]],storage:PrivateStorage)->dict[str,Any]:
     session=get_session(session_id,user_id);inspection=await inspect_session(session);blocked=_blocked_page(inspection)
