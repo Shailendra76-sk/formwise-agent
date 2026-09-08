@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.auth import require_user_id
@@ -8,7 +8,7 @@ from app.config import settings
 from app.database import get_db
 from app.db_models import AuditLogRecord
 from app.knowledge_api import KnowledgeContextResponse, KnowledgeReindexResponse, KnowledgeResult, KnowledgeSearchRequest, KnowledgeSearchResponse
-from app.knowledge_base import build_user_index, index_key, load_user_index, rank_chunks, save_user_index
+from app.knowledge_base import build_user_index, load_user_index, rank_chunks, save_user_index
 from app.storage import PrivateStorage
 
 router = APIRouter(prefix="/v1/knowledge", tags=["knowledge-base"])
@@ -16,7 +16,6 @@ storage = PrivateStorage(settings.storage_root)
 
 
 def _audit(db: Session, user_id: str, action: str) -> None:
-    # Intentionally do not store query text or retrieved personal data in audit logs.
     db.add(AuditLogRecord(user_id=user_id, action=action, resource_type="knowledge_index", resource_id=None))
 
 
@@ -58,8 +57,7 @@ def get_knowledge_context(payload: KnowledgeSearchRequest, user_id: str = Depend
     used = 0
     parts: list[str] = []
     for result in results:
-        prefix = f"[{result.source_type}:{result.source_id}]
-"
+        prefix = f"[{result.source_type}:{result.source_id}]\n"
         remaining = max_chars - used - len(prefix)
         if remaining <= 0:
             break
