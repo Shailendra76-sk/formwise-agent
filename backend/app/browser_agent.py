@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
+from playwright.async_api import Browser, BrowserContext, Page, Playwright, Route, Request, async_playwright
 
 from app.config import settings
 
@@ -39,14 +39,7 @@ _PLAYWRIGHT: Playwright | None = None
 
 def _is_blocked_ip(address: str) -> bool:
     ip = ipaddress.ip_address(address)
-    return (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_multicast
-        or ip.is_reserved
-        or ip.is_unspecified
-    )
+    return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified
 
 
 def validate_navigation_url(url: str) -> str:
@@ -69,6 +62,15 @@ def validate_navigation_url(url: str) -> str:
         if not addresses or any(_is_blocked_ip(address) for address in addresses):
             raise BrowserSafetyError("private or otherwise unsafe network destinations are blocked")
     return url.strip()
+
+
+async def _guard_request(route: Route, request: Request) -> None:
+    try:
+        validate_navigation_url(request.url)
+    except BrowserSafetyError:
+        await route.abort("blockedbyclient")
+        return
+    await route.continue_()
 
 
 async def _get_playwright() -> Playwright:
@@ -98,6 +100,7 @@ async def create_session(user_id: str, url: str) -> BrowserSession:
             permissions=[],
             service_workers="block",
         )
+        await context.route("**/*", _guard_request)
         page = await context.new_page()
         page.set_default_timeout(settings.browser_timeout_ms)
         page.set_default_navigation_timeout(settings.browser_navigation_timeout_ms)
