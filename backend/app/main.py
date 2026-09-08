@@ -8,20 +8,16 @@ from app.form_execution_routes import router as e2e_router
 from app.form_mapping_routes import router as form_mapping_router
 from app.knowledge_routes import router as knowledge_router
 from app.routes import router
+from app.security import validate_production_security
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app:FastAPI):
+    validate_production_security()
     yield
     await close_all_sessions()
 
 app=FastAPI(title='Formwise Agent API',version='0.1.0',description='Secure profile, document-vault, knowledge, agent planning, controlled browser, form mapping, approval safety and end-to-end form execution API.',lifespan=lifespan)
-app.include_router(router)
-app.include_router(knowledge_router)
-app.include_router(agent_router)
-app.include_router(browser_router)
-app.include_router(form_mapping_router)
-app.include_router(approval_router)
-app.include_router(e2e_router)
+app.include_router(router);app.include_router(knowledge_router);app.include_router(agent_router);app.include_router(browser_router);app.include_router(form_mapping_router);app.include_router(approval_router);app.include_router(e2e_router)
 
 @app.get('/health',tags=['system'])
-async def health()->dict[str,str]: return {'status':'ok','service':'formwise-api'}
+async def health()->dict[str,str]:return {'status':'ok','service':'formwise-api'}
