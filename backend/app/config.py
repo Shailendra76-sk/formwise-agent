@@ -1,6 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 class Settings(BaseSettings):
     app_name: str = "Formwise Agent API"
     environment: str = "development"
@@ -14,12 +13,9 @@ class Settings(BaseSettings):
     browser_max_pages_per_session: int = 3
     browser_screenshot_enabled: bool = True
     browser_block_private_networks: bool = True
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_prefix="FORMWISE_",
-        extra="ignore",
-    )
-
+    jwt_secret: str = "change-me-in-production"
+    jwt_algorithm: str = "HS256"
+    allow_legacy_user_header: bool = True
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="FORMWISE_", extra="ignore")
 
 settings = Settings()
