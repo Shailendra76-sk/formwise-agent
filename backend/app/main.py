@@ -1,18 +1,31 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
-from app.routes import router
-from app.knowledge_routes import router as knowledge_router
 from app.agent_routes import router as agent_router
+from app.browser_agent import close_all_sessions
+from app.browser_routes import router as browser_router
+from app.knowledge_routes import router as knowledge_router
+from app.routes import router
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    await close_all_sessions()
+
 
 app = FastAPI(
     title="Formwise Agent API",
     version="0.1.0",
-    description="Secure profile, document-vault, knowledge and agent planning API.",
+    description="Secure profile, document-vault, knowledge, agent planning and controlled browser API.",
+    lifespan=lifespan,
 )
 
 app.include_router(router)
 app.include_router(knowledge_router)
 app.include_router(agent_router)
+app.include_router(browser_router)
 
 
 @app.get("/health", tags=["system"])
