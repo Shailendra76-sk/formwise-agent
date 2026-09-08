@@ -7,7 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db_models import AddressRecord, DocumentRecord, EducationRecord, ProfileRecord
-from app.document_intelligence import ExtractedField
 from app.storage import PrivateStorage
 
 INDEX_VERSION = "1"
@@ -69,13 +68,7 @@ def _profile_chunks(profile: ProfileRecord) -> list[dict[str, Any]]:
 
 def _make_source_chunks(text: str, source_type: str, source_id: str, metadata: dict[str, Any]) -> list[dict[str, Any]]:
     return [
-        {
-            "source_type": source_type,
-            "source_id": source_id,
-            "chunk_index": i,
-            "text": chunk,
-            "metadata": metadata,
-        }
+        {"source_type": source_type, "source_id": source_id, "chunk_index": i, "text": chunk, "metadata": metadata}
         for i, chunk in enumerate(split_chunks(text))
     ]
 
@@ -85,15 +78,12 @@ def build_user_index(db: Session, user_id: str, storage: PrivateStorage) -> dict
     profile = db.get(ProfileRecord, user_id)
     if profile:
         chunks.extend(_profile_chunks(profile))
-
     for row in db.scalars(select(AddressRecord).where(AddressRecord.user_id == user_id)).all():
         text = f"Address ({row.label}): {row.line1}; {row.line2 or ''}; {row.city or ''}; {row.state or ''}; {row.postal_code or ''}; {row.country}"
         chunks.extend(_make_source_chunks(text, "address", row.id, {"label": row.label}))
-
     for row in db.scalars(select(EducationRecord).where(EducationRecord.user_id == user_id)).all():
         text = f"Education: qualification: {row.qualification}; institution: {row.institution or ''}; board/university: {row.board_university or ''}; passing year: {row.passing_year or ''}; percentage/CGPA: {row.percentage_or_cgpa or ''}"
         chunks.extend(_make_source_chunks(text, "education", row.id, {"qualification": row.qualification}))
-
     for doc in db.scalars(select(DocumentRecord).where(DocumentRecord.user_id == user_id, DocumentRecord.status != "deleted")).all():
         try:
             extraction = storage.read_json(user_id, f"{doc.storage_key}.extraction.json")
@@ -106,7 +96,6 @@ def build_user_index(db: Session, user_id: str, storage: PrivateStorage) -> dict
         raw_text = str(extraction.get("text") or "")
         if raw_text:
             chunks.extend(_make_source_chunks(raw_text, "document_text", doc.id, {"filename": doc.original_filename, "document_sha256": doc.sha256, "engine": extraction.get("engine", "unknown")}))
-
     return {"schema_version": INDEX_VERSION, "user_id": user_id, "chunks": chunks}
 
 
