@@ -1,5 +1,5 @@
 import pytest
-from app.browser_agent import create_session,close_session,fill_control,inspect_session,BrowserSafetyError
+from app.browser_agent import BrowserSafetyError,close_session,create_session,fill_control,inspect_session
 
 @pytest.mark.asyncio
 async def test_local_demo_browser_can_inspect_and_fill_non_submit_controls():
@@ -10,8 +10,9 @@ async def test_local_demo_browser_can_inspect_and_fill_non_submit_controls():
         assert {"fullName","dob","email","mobile","captcha","otp"}.issubset(by_name)
         await fill_control(session,by_name["fullName"]["index"],"Test Candidate")
         await fill_control(session,by_name["email"]["index"],"test@example.com")
+        submit=next(c for c in inspection["controls"] if c.get("type")=="submit")
         with pytest.raises(BrowserSafetyError):
-            await fill_control(session,by_name["captcha"]["index"],"7X9K2") if by_name["captcha"]["type"] in {"submit","file"} else None
+            await fill_control(session,submit["index"],"anything")
         assert inspection["submission_allowed"] is False
     finally:
         await close_session(session.session_id,"demo-browser-user")
