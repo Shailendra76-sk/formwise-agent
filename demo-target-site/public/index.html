@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Formwise Demo Application</title>
+<style>body{font-family:Arial,sans-serif;max-width:520px;margin:40px auto;padding:0 16px}label{display:block;margin:14px 0 4px;font-weight:700}input{width:100%;padding:9px;box-sizing:border-box}button{margin-top:18px;padding:10px 16px} .captcha{padding:12px;background:#eee;font:700 22px monospace;letter-spacing:5px}</style></head>
+<body><h1>Formwise Demo Application</h1><p>This local-only target is for safe end-to-end testing.</p>
+<form method="post" action="/submit" enctype="multipart/form-data">
+<label>Full Name</label><input name="fullName" autocomplete="name">
+<label>Date of Birth</label><input name="dob" type="date" autocomplete="bday">
+<label>Email</label><input name="email" type="email" autocomplete="email">
+<label>Mobile Number</label><input name="mobile" type="tel" autocomplete="tel">
+<label>Upload Photo</label><input name="photo" type="file">
+<label>Upload Signature</label><input name="signature" type="file">
+<label>Captcha</label><div class="captcha">7 X 9 K 2</div><input name="captcha" autocomplete="off">
+<label>OTP <button type="button" onclick="sendOtp()">Send OTP</button></label><input name="otp" inputmode="numeric" autocomplete="one-time-code">
+<button id="submit" type="submit">Submit Application</button></form>
+<script>async function sendOtp(){await fetch('/generate-otp');alert('Demo OTP generated. Check the demo server console.');}</script></body></html>
