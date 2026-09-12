@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     browser_max_pages_per_session: int = 3
     browser_screenshot_enabled: bool = True
     browser_block_private_networks: bool = True
+    browser_allow_local_demo_target: bool = False
+    browser_demo_target_port: int = 5000
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     allow_legacy_user_header: bool = True
