@@ -65,7 +65,9 @@ async def open_application(db:Session,storage:PrivateStorage,user_id:str,workflo
     workflow=load_workflow(storage,user_id,workflow_id)
     if workflow["state"]!="documents_ready":raise ValueError("complete the missing profile/document checklist first")
     from app.browser_agent import create_session
-    session=await create_session(user_id,workflow["research"].get("apply_url") or workflow["research"].get("application_form_url") or "https://ssc.gov.in/");inspection=await inspect_session(session);workflow["session_id"]=session.session_id;workflow["state"]="browser_ready";workflow["history"].append({"event":"application_opened","url":inspection["url"],"at":time.time()});_save(storage,user_id,workflow);_audit(db,user_id,"workflow.browser_opened",workflow_id);return {**workflow,"inspection":inspection}
+    target=workflow["research"].get("apply_url") or workflow["research"].get("application_form_url")
+    if not target:raise ValueError("approved application URL is required")
+    session=await create_session(user_id,target);inspection=await inspect_session(session);workflow["session_id"]=session.session_id;workflow["state"]="browser_ready";workflow["history"].append({"event":"application_opened","url":inspection["url"],"at":time.time()});_save(storage,user_id,workflow);_audit(db,user_id,"workflow.browser_opened",workflow_id);return {**workflow,"inspection":inspection}
 async def submit_human_gate(db:Session,storage:PrivateStorage,user_id:str,workflow_id:str,kind:str,value:str)->dict[str,Any]:
     if kind not in {"otp","captcha"}:raise ValueError("only OTP or CAPTCHA can be supplied as a human gate")
     workflow=load_workflow(storage,user_id,workflow_id);session_id=workflow.get("session_id")
@@ -89,16 +91,15 @@ async def fill_form(db:Session,storage:PrivateStorage,user_id:str,workflow_id:st
 def request_final_approval(storage:PrivateStorage,user_id:str,workflow_id:str)->dict[str,Any]:
     workflow=load_workflow(storage,user_id,workflow_id)
     if workflow.get("state")!="final_review":raise ValueError("workflow is not ready for final review")
-    payload={"workflow_id":workflow_id,"session_id":workflow["session_id"],"screenshot_key":workflow.get("last_screenshot_key")};approval=create_approval(storage,user_id,"final_submit",workflow["session_id"],payload,600);return {"approval_id":approval.approval_id,"expires_at":approval.expires_at,"payload":payload}
+    return {"approval_id":None,"manual_action_required":True,"message":"PAUSED: Final submission is never clicked automatically. Review the form and click the final Submit/Confirm button yourself.","workflow_id":workflow_id,"screenshot_key":workflow.get("last_screenshot_key")}
 async def final_submit(db:Session,storage:PrivateStorage,user_id:str,workflow_id:str,approval_id:str)->dict[str,Any]:
     workflow=load_workflow(storage,user_id,workflow_id)
-    if workflow.get("state")!="final_review":raise ValueError("final review is required before submission")
+    if workflow.get("state")!="final_review":raise ValueError("final review is required before manual submission")
     session=get_session(workflow["session_id"],user_id);inspection=await inspect_session(session)
     if _otp_control(inspection) is not None or _human_control(inspection,"captcha") is not None:raise ValueError("human verification is still pending; OTP/CAPTCHA must be completed first")
     idx=_final_submit_control(inspection)
-    if idx is None:raise ValueError("unique final submit control was not detected; nothing was submitted")
-    payload={"workflow_id":workflow_id,"session_id":workflow["session_id"],"screenshot_key":workflow.get("last_screenshot_key")};consume(storage,user_id,approval_id,"final_submit",workflow["session_id"],payload)
-    await session.page.locator('input, textarea, select, button').nth(idx).click();await session.page.wait_for_load_state("domcontentloaded");screenshot=await screenshot_session(session);key=f"workflow/{workflow_id}/submitted-{uuid.uuid4().hex}.png";storage.save(user_id,key,screenshot);workflow["state"]="submitted";workflow["last_screenshot_key"]=key;workflow["history"].append({"event":"final_submission","at":time.time()});_save(storage,user_id,workflow);_audit(db,user_id,"workflow.final_submitted",workflow_id);return {**workflow,"submitted":True,"screenshot_key":key,"url":session.page.url}
+    if idx is None:raise ValueError("final submit control is not uniquely identifiable; no submission action was taken")
+    return {"status":"paused","submitted":False,"manual_action_required":True,"message":"PAUSED: Final submission is disabled for automation. Please review the completed form and click the final Submit/Confirm button manually.","field_index":idx,"url":inspection["url"],"screenshot_key":workflow.get("last_screenshot_key")}
 
 # Universal entry point: any government, private, education, district or state portal.
 async def start_workflow(db:Session,storage:PrivateStorage,user_id:str,instruction:str,provided_url:str|None=None)->dict[str,Any]:

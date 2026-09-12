@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     browser_block_private_networks: bool = True
     browser_allow_local_demo_target: bool = False
     browser_demo_target_port: int = 5000
+    browser_use_enabled: bool = False
+    browser_use_model: str = "gpt-5.6-luna"
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     allow_legacy_user_header: bool = True

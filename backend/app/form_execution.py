@@ -9,6 +9,7 @@ from app.db_models import DocumentRecord
 from app.form_mapping import map_controls
 from app.knowledge_base import load_user_index
 from app.storage import PrivateStorage
+from app.user_data import get_user_data
 
 BLOCKED_PAGE_TERMS={"payment","pay now","final submission","legal declaration","i agree","anti-bot","anti bot","bot verification"}
 
@@ -49,16 +50,23 @@ def _document_proposal(field:str,db:Session,user_id:str)->dict[str,Any]|None:
     return None
 
 async def plan_form(user_id:str,session_id:str,instruction:str,storage:PrivateStorage,db:Session|None=None)->dict[str,Any]:
-    session=get_session(session_id,user_id);inspection=await inspect_session(session);signals=_page_signals(inspection);mappings=map_controls(inspection["controls"]);index=load_user_index(storage,user_id);chunks=index.get("chunks",[]);proposals=[]
+    session=get_session(session_id,user_id);inspection=await inspect_session(session);signals=_page_signals(inspection);mappings=map_controls(inspection["controls"]);proposals=[];knowledge_chunks=None
     for mapping in mappings:
         field=mapping.get("field")
         if not field or mapping.get("confidence",0)<0.70 or inspection["controls"][mapping["index"]].get("disabled"):continue
-        value=_document_proposal(field,db,user_id) if db else None
-        value=value or _resolve_value(field,chunks)
+        value=None
+        if db:
+            value=get_user_data(db,storage,user_id,field)
+        if value is None and db and field in {"photo","signature"}:
+            value=_document_proposal(field,db,user_id)
+        if value is None:
+            if knowledge_chunks is None:
+                knowledge_chunks=load_user_index(storage,user_id).get("chunks",[])
+            value=_resolve_value(field,knowledge_chunks)
         if value:proposals.append({**value,"index":mapping["index"],"requires_approval":field in SENSITIVE_FIELDS,"reason":mapping.get("reason")})
     fills=[dict(item) for item in proposals]
     status="blocked" if signals["blocked"] else ("ready" if proposals else "needs_clarification")
-    return {"status":status,"instruction":instruction,"session_id":session_id,"url":inspection["url"],"title":inspection["title"],"mappings":mappings,"proposals":proposals,"fills":fills,"blocked_signals":signals["blocked"],"human_required":signals["human"],"submission_allowed":False,"warnings":["Only deterministic mapped fields with stored values are proposed.","No value is invented.","Sensitive fields require explicit approval.","CAPTCHA and OTP are human gates; they are never read or solved by Formwise.","Payment, anti-bot bypass, legal declarations and final submission are never automated."]}
+    return {"status":status,"instruction":instruction,"session_id":session_id,"url":inspection["url"],"title":inspection["title"],"mappings":mappings,"proposals":proposals,"fills":fills,"blocked_signals":signals["blocked"],"human_required":signals["human"],"submission_allowed":False,"warnings":["User data is fetched on-demand only for a mapped field.","Only stored values with provenance are proposed.","No value is invented.","Sensitive fields require explicit approval.","CAPTCHA and OTP are human gates; they are never solved by Formwise.","Payment, anti-bot bypass, legal declarations and final submission are never automated."]}
 
 async def execute_form(user_id:str,session_id:str,fills:list[dict[str,Any]],storage:PrivateStorage,db:Session|None=None)->dict[str,Any]:
     session=get_session(session_id,user_id);inspection=await inspect_session(session);blocked=_blocked_page(inspection)

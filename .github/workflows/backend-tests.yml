@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - "backend/**"
+      - "demo-target-site/**"
       - ".github/workflows/backend-tests.yml"
   pull_request:
     paths:
       - "backend/**"
+      - "demo-target-site/**"
       - ".github/workflows/backend-tests.yml"
 
 jobs:
@@ -18,10 +20,24 @@ jobs:
         working-directory: backend
     env:
       PYTHONPATH: .
+      FORMWISE_BROWSER_HEADLESS: "true"
       FORMWISE_BROWSER_ALLOW_LOCAL_DEMO_TARGET: "true"
+      FORMWISE_BROWSER_USE_ENABLED: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: demo-target-site/package.json
+      - name: Install demo target
+        working-directory: demo-target-site
+        run: npm install
+      - name: Start demo target
+        working-directory: demo-target-site
+        run: npm start > /tmp/formwise-demo.log 2>&1 &
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -30,7 +46,12 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - name: Install dependencies
         run: pip install -r requirements.txt
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
       - name: Run tests
         run: python -m pytest -q
       - name: Check migrations
         run: alembic upgrade head
+      - name: Demo target log
+        if: always()
+        run: cat /tmp/formwise-demo.log || true
