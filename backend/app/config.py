@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     serper_api_key: str = ""
     serper_url: str = "https://google.serper.dev/search"
     research_timeout_seconds: float = 20.0
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     model_config = SettingsConfigDict(env_file=".env", env_prefix="FORMWISE_", extra="ignore")
 
 settings = Settings()
