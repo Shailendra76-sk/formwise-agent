@@ -7,11 +7,22 @@ from app.form_mapping import map_controls
 from app.knowledge_base import load_user_index
 from app.storage import PrivateStorage
 
-BLOCKED_TERMS={"captcha","recaptcha","hcaptcha","otp","one time password","payment","pay now","final submission","declaration","i agree"}
+BLOCKED_TEXT_TERMS={"captcha","recaptcha","hcaptcha","otp","one time password","payment","pay now","final submission","declaration","i agree"}
 
 def _blocked_page(inspection:dict[str,Any])->list[str]:
-    hay=(inspection.get("title","")+" "+inspection.get("url","")+" "+" ".join(str(c.get("text", "")) for c in inspection.get("controls",[]))).lower()
-    return sorted(t for t in BLOCKED_TERMS if t in hay)
+    signals=set()
+    for control in inspection.get("controls",[]):
+        text=" ".join(str(control.get(k, "")) for k in ("text","ariaLabel","placeholder","name","id")).lower()
+        control_type=str(control.get("type","")).lower()
+        if any(term in text for term in ("captcha","recaptcha","hcaptcha")): signals.add("captcha")
+        if "otp" in text or "one time password" in text: signals.add("otp")
+        if "payment" in text or "pay now" in text: signals.add("payment")
+        if "declaration" in text or "i agree" in text: signals.add("declaration")
+        if control_type=="submit" and any(term in text for term in ("final submission","final submit","submit application","confirm and submit")): signals.add("final submission")
+    page_text=(inspection.get("title","")+" "+inspection.get("url","")).lower()
+    for term in BLOCKED_TEXT_TERMS:
+        if term in page_text: signals.add(term)
+    return sorted(signals)
 
 def _resolve_value(field:str,chunks:list[dict[str,Any]])->dict[str,Any]|None:
     candidates=[];seen=set()
