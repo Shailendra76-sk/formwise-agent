@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     allow_legacy_user_header: bool = True
+    serper_api_key: str = ""
+    serper_url: str = "https://google.serper.dev/search"
+    research_timeout_seconds: float = 20.0
     model_config = SettingsConfigDict(env_file=".env", env_prefix="FORMWISE_", extra="ignore")
 
 settings = Settings()
