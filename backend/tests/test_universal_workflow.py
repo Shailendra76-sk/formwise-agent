@@ -12,3 +12,5 @@ async def test_user_provided_url_becomes_verified_target_without_web_search():
 async def test_unsafe_user_url_is_rejected():
     result=await discover_target("application", "javascript:alert(1)")
     assert result["needs_user_url"] is True
+
+# Keep the universal path explicit: no site-specific domain is required when a user supplies a URL.
