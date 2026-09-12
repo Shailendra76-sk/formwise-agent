@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent
 DEMO_DIR = ROOT / "demo-target-site"
 BACKEND_DIR = ROOT / "backend"
 DEMO_URL = "http://localhost:5000/"
+SELF_HEAL_DEMO_URL = DEMO_URL + "?self_heal=1"
 API_URL = "http://127.0.0.1:8000"
 USER_ID = "formwise-demo-user"
 PROCESSES: list[subprocess.Popen] = []
@@ -83,10 +84,10 @@ def api(method: str, path: str, **kwargs):
 
 
 def main() -> None:
-    print("=" * 68)
-    print(" FORMwise — LOCAL DUMMY FORM LIVE DEMO")
+    print("=" * 72)
+    print(" FORMwise — SELF-HEALING LOCAL DUMMY FORM LIVE DEMO")
     print(" Fake profile only | localhost only | NO automated final submit")
-    print("=" * 68)
+    print("=" * 72)
 
     if shutil.which("node") is None:
         fail("Node.js is required. Install Node.js, then run this script again.")
@@ -123,7 +124,7 @@ def main() -> None:
     )
     wait_for(API_URL + "/health")
 
-    print("\n[1/6] Loading FAKE profile data...")
+    print("\n[1/7] Loading FAKE profile data...")
     fake_profile = {
         "full_name": "Demo User",
         "date_of_birth": "2000-01-02",
@@ -138,20 +139,50 @@ def main() -> None:
     api("PUT", "/v1/profile", json=fake_profile)
     api("POST", "/v1/knowledge/reindex")
 
-    print("\n[2/6] Opening dummy form in a VISIBLE browser...")
+    print("\n[2/7] Opening the ORIGINAL dummy form briefly...")
     session = api("POST", "/v1/browser/sessions", json={"url": DEMO_URL})
     session_id = session["session_id"]
     print(f"       Session: {session_id}")
+    original = api("GET", f"/v1/browser/sessions/{session_id}/inspect")
+    original_controls = original.get("controls", [])
+    original_targets = [
+        (i, c.get("name"), c.get("id"))
+        for i, c in enumerate(original_controls)
+        if c.get("name") in {"fullName", "dob", "email", "mobile"}
+    ]
+    print("       Baseline machine metadata:")
+    for index, name, control_id in original_targets:
+        print(f"         index={index:<2} name={name:<10} id={control_id}")
 
-    print("\n[3/6] Inspecting fields and creating the fill plan...")
+    print("\n       Switching the same session to SELF-HEALING MODE...")
+    api("POST", f"/v1/browser/sessions/{session_id}/navigate", json={"url": SELF_HEAL_DEMO_URL})
+    mutated = api("GET", f"/v1/browser/sessions/{session_id}/inspect")
+    mutated_controls = mutated.get("controls", [])
+    print("       Mutated machine metadata (old names/IDs are gone):")
+    for c in mutated_controls:
+        if c.get("label") in {"Full Name", "Date of Birth", "Email", "Mobile Number"}:
+            print(
+                f"         label={c.get('label')!r} name={c.get('name')!r} "
+                f"id={c.get('id')!r} nearby={c.get('nearbyText')!r}"
+            )
+
+    print("\n[3/7] Running the normal E2E planner against the mutated DOM...")
+    print("       Expected: deterministic metadata misses -> semantic self-healing recovers.")
     plan = api(
         "POST",
         "/v1/e2e/plan",
         json={"session_id": session_id, "instruction": "Fill this dummy application using my stored profile."},
     )
     print(f"       Plan status: {plan.get('status')}")
+    healed = 0
     for item in plan.get("proposals", []):
-        print(f"       - {item.get('field')}: mapped | approval={item.get('requires_approval')}")
+        marker = "SELF-HEALED" if item.get("self_healed") else "deterministic"
+        if item.get("self_healed"):
+            healed += 1
+        print(f"       - {item.get('field')}: {marker} | confidence={item.get('confidence')}")
+    print(f"       Self-healed mappings observed: {healed}")
+    if healed == 0:
+        fail("The self-healing demo did not produce any self-healed mappings.")
 
     fills = []
     for item in plan.get("fills", []):
@@ -176,15 +207,16 @@ def main() -> None:
             fill_item["approval_id"] = approval["approval_id"]
         fills.append(fill_item)
 
-    print("\n[4/6] Filling approved stored values...")
+    print("\n[4/7] Filling approved stored values using recovered mappings...")
     result = api("POST", "/v1/e2e/fill", json={"session_id": session_id, "fills": fills})
     for item in result.get("filled", []):
-        print(f"       FILLED: {item.get('field')}")
+        healed_marker = " [self-healed]" if item.get("self_healed") else ""
+        print(f"       FILLED: {item.get('field')}{healed_marker}")
     print("       Submission allowed:", result.get("submission_allowed"))
     print("       Human gates:", result.get("human_required", []))
 
     if "captcha" in result.get("human_required", []):
-        print("\n[5/6] CAPTCHA GATE — automation is STOPPED.")
+        print("\n[5/7] CAPTCHA GATE — automation is STOPPED.")
         print("       The visible dummy form shows: 7 X 9 K 2")
         captcha = input("       Enter the CAPTCHA in this terminal: ").strip()
         api("POST", f"/v1/browser/sessions/{session_id}/human", json={"kind": "captcha", "value": captcha})
@@ -198,7 +230,7 @@ def main() -> None:
         api("POST", f"/v1/browser/sessions/{session_id}/human", json={"kind": "otp", "value": otp})
         print("       OTP accepted as a HUMAN-PROVIDED value.")
 
-    print("\n[6/6] FINAL REVIEW — MANUAL ONLY")
+    print("\n[6/7] FINAL REVIEW — MANUAL ONLY")
     inspection = api("GET", f"/v1/browser/sessions/{session_id}/inspect")
     print(f"       URL: {inspection.get('url')}")
     print(f"       Title: {inspection.get('title')}")
@@ -207,7 +239,8 @@ def main() -> None:
     input("\nPress Enter after review to close the demo (DO NOT click Submit)... ")
 
     api("DELETE", f"/v1/browser/sessions/{session_id}")
-    print("\n[DONE] Safe dummy demo completed.")
+    print("\n[7/7] [DONE] Self-healing demo completed safely.")
+    print("       Intentional DOM mutation was recovered from semantic context.")
     print("       No real personal data was used.")
     print("       Formwise did NOT click final Submit.")
     stop_processes()
