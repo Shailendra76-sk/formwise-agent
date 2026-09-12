@@ -10,7 +10,7 @@ httpx>=0.27,<1.0
 cryptography>=43,<46
 PyJWT>=2.9,<3.0
 PyMuPDF>=1.24,<2.0
-Pillow>=10.4,<12.0
+Pillow==12.3.0
 pytesseract>=0.3.13,<1.0
 playwright>=1.52,<2.0
 browser-use>=0.13.10,<1.0
