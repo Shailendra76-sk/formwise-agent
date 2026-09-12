@@ -1,15 +1,16 @@
 from __future__ import annotations
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter,Depends,HTTPException
+from pydantic import BaseModel,Field
 from sqlalchemy.orm import Session
 from app.auth import require_user_id
+from app.config import settings
 from app.database import get_db
 from app.orchestrator import confirm_research,fill_form,final_submit,load_workflow,open_application,prepare_form,request_final_approval,start_workflow,submit_human_gate
 from app.storage import PrivateStorage
-router=APIRouter(prefix="/v1/workflows",tags=["orchestrator"])
-storage=PrivateStorage(__import__('app.config',fromlist=['settings']).settings.storage_root)
+router=APIRouter(prefix="/v1/workflows",tags=["orchestrator"]);storage=PrivateStorage(settings.storage_root)
 class StartRequest(BaseModel): instruction:str=Field(min_length=3,max_length=1000)
 class ConfirmRequest(BaseModel): confirmed:bool
+class OtpRequest(BaseModel): otp:str=Field(min_length=4,max_length=8)
 class HumanGateRequest(BaseModel): kind:str=Field(pattern="^(otp|captcha)$"); value:str=Field(min_length=1,max_length=32)
 class FillRequest(BaseModel): fills:list[dict]=Field(max_length=100)
 class FinalSubmitRequest(BaseModel): approval_id:str=Field(min_length=10,max_length=200)
@@ -35,9 +36,8 @@ async def human(workflow_id:str,payload:HumanGateRequest,user_id:str=Depends(req
     try:return await submit_human_gate(db,storage,user_id,workflow_id,payload.kind,payload.value)
     except Exception as exc:_error(exc)
 @router.post("/{workflow_id}/otp")
-async def otp(workflow_id:str,payload:HumanGateRequest,user_id:str=Depends(require_user_id),db:Session=Depends(get_db)):
-    if payload.kind!="otp":raise HTTPException(400,"kind must be otp")
-    try:return await submit_human_gate(db,storage,user_id,workflow_id,"otp",payload.value)
+async def otp(workflow_id:str,payload:OtpRequest,user_id:str=Depends(require_user_id),db:Session=Depends(get_db)):
+    try:return await submit_human_gate(db,storage,user_id,workflow_id,"otp",payload.otp)
     except Exception as exc:_error(exc)
 @router.post("/{workflow_id}/plan")
 async def plan(workflow_id:str,user_id:str=Depends(require_user_id),db:Session=Depends(get_db)):
