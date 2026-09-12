@@ -18,6 +18,7 @@ jobs:
         working-directory: backend
     env:
       PYTHONPATH: .
+      FORMWISE_BROWSER_ALLOW_LOCAL_DEMO_TARGET: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
