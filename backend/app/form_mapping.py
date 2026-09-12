@@ -41,9 +41,7 @@ class FieldCandidate:
     field:str; score:float; reason:str; self_healed:bool=False
 
 def normalize(value:str|None)->str:return re.sub(r"[^a-z0-9]+"," ",(value or "").lower()).strip()
-def _label_text(c:dict)->str:return " ".join(str(c.get(k) or "") for k in ("name","id","autocomplete","placeholder","ariaLabel","label","nearbyText","text","type"))
 def _deterministic_text(c:dict)->str:return " ".join(str(c.get(k) or "") for k in ("name","id","autocomplete","placeholder","type"))
-
 def infer_field(control:dict)->FieldCandidate|None:
     text=normalize(_deterministic_text(control));typ=normalize(control.get("type"));ac=normalize(control.get("autocomplete"));matches=[]
     for field,aliases in FIELD_ALIASES.items():
@@ -66,7 +64,7 @@ def _semantic_score(field:str,control:dict)->tuple[float,str]:
         if not raw:continue
         for alias in aliases:
             if alias and (raw==alias or re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])",raw)):
-                score=min(.99,.94*(weight/5.0));
+                score=min(.99,.94*(weight/5.0))
                 if score>best:best=score;best_source=key
                 continue
             tokens=_tokens(raw);alias_tokens=_tokens(alias)
@@ -78,17 +76,18 @@ def _semantic_score(field:str,control:dict)->tuple[float,str]:
 def resolve_field_mapping(field:str,controls:list[dict],preferred_index:int|None=None)->FieldCandidate|None:
     if preferred_index is not None and 0<=preferred_index<len(controls):
         direct=infer_field(controls[preferred_index])
-        if direct and direct.field==field:return direct
+        if direct and direct.field==field:return FieldCandidate(field,direct.score,f"{direct.reason}; control index={preferred_index}",False)
     ranked=[]
     for index,control in enumerate(controls):
         candidate=infer_field(control)
-        if candidate and candidate.field==field:ranked.append((candidate.score,index,candidate.reason,False));continue
+        if candidate and candidate.field==field:
+            ranked.append((candidate.score,index,f"{candidate.reason}; control index={index}",False));continue
         score,source=_semantic_score(field,control)
-        if score>=.82:ranked.append((score,index,f"self-healed from semantic {source} context",True))
-    ranked.sort(reverse=True); 
+        if score>=.82:ranked.append((score,index,f"self-healed from semantic {source} context; control index={index}",True))
+    ranked.sort(reverse=True)
     if not ranked:return None
     winner=ranked[0];runner=ranked[1][0] if len(ranked)>1 else 0.0
-    if winner[0]>=.86 and winner[0]-runner>=.10:return FieldCandidate(field,winner[0],f"{winner[2]}; control index={winner[1]}",winner[3])
+    if winner[0]>=.86 and winner[0]-runner>=.10:return FieldCandidate(field,winner[0],winner[2],winner[3])
     return None
 
 def map_controls(controls:list[dict])->list[dict]:
