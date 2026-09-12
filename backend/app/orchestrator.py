@@ -16,8 +16,8 @@ def load_workflow(storage:PrivateStorage,user_id:str,workflow_id:str)->dict[str,
 def _audit(db:Session,user_id:str,action:str,workflow_id:str)->None:db.add(AuditLogRecord(user_id=user_id,action=action,resource_type="workflow",resource_id=workflow_id));db.commit()
 def _doc_kind(filename:str)->str:
     name=filename.lower()
-    if any(x in name for x in ("10th","matric","class10","highschool")):return "education_10th"
-    if any(x in name for x in ("12th","inter","class12","intermediate")):return "education_12th"
+    if any(x in name for x in ("10th","matric","class10","class 10","highschool")):return "education_10th"
+    if any(x in name for x in ("12th","12 marksheet","12th marksheet","class12","class 12","inter","intermediate")):return "education_12th"
     if any(x in name for x in ("aadhaar","aadhar","uid")):return "identity"
     if "pan" in name:return "pan"
     if any(x in name for x in ("caste","sc","st","obc","ews")):return "category_certificate"
@@ -28,12 +28,9 @@ def _document_checklist(db:Session,user_id:str,storage:PrivateStorage)->dict[str
     rows=db.scalars(select(DocumentRecord).where(DocumentRecord.user_id==user_id,DocumentRecord.status!="deleted")).all();kinds=set();extracted=[]
     for row in rows:
         kind=_doc_kind(row.original_filename);kinds.add(kind)
-        try:
-            data=storage.read_json(user_id,f"{row.storage_key}.extraction.json");fields=data.get("fields",[]);extracted.append({"document_id":row.id,"filename":row.original_filename,"status":data.get("status"),"fields":[f.get("name") for f in fields if f.get("name")],"engine":data.get("engine")})
+        try:data=storage.read_json(user_id,f"{row.storage_key}.extraction.json");fields=data.get("fields",[]);extracted.append({"document_id":row.id,"filename":row.original_filename,"status":data.get("status"),"fields":[f.get("name") for f in fields if f.get("name")],"engine":data.get("engine")})
         except FileNotFoundError:extracted.append({"document_id":row.id,"filename":row.original_filename,"status":"not_extracted","fields":[]})
-    profile=db.get(ProfileRecord,user_id);required=[{"key":"identity","label":"Identity/address proof","required":True},{"key":"education_12th","label":"Class 12 / equivalent qualification proof","required":True},{"key":"photo","label":"Recent photograph","required":True},{"key":"signature","label":"Signature image","required":True}]
-    missing=[x for x in required if x["key"] not in kinds];not_extracted=[x for x in extracted if x["status"]=="not_extracted"];profile_missing=[field for field in ("full_name","date_of_birth","gender","email","phone") if not getattr(profile,field,None)]
-    return {"documents":[{"key":x["key"],"label":x["label"],"present":x["key"] not in {m["key"] for m in missing}} for x in required],"extracted_documents":extracted,"missing_documents":missing,"documents_needing_ocr":not_extracted,"missing_profile_fields":profile_missing,"ready":not missing and not not_extracted and not profile_missing}
+    profile=db.get(ProfileRecord,user_id);required=[{"key":"identity","label":"Identity/address proof","required":True},{"key":"education_12th","label":"Class 12 / equivalent qualification proof","required":True},{"key":"photo","label":"Recent photograph","required":True},{"key":"signature","label":"Signature image","required":True}];missing=[x for x in required if x["key"] not in kinds];not_extracted=[x for x in extracted if x["status"]=="not_extracted"];profile_missing=[field for field in ("full_name","date_of_birth","gender","email","phone") if not getattr(profile,field,None)];return {"documents":[{"key":x["key"],"label":x["label"],"present":x["key"] not in {m["key"] for m in missing}} for x in required],"extracted_documents":extracted,"missing_documents":missing,"documents_needing_ocr":not_extracted,"missing_profile_fields":profile_missing,"ready":not missing and not not_extracted and not profile_missing}
 def _otp_control(inspection:dict[str,Any])->int|None:
     for c in inspection.get("controls",[]):
         hay=" ".join(str(c.get(k) or "") for k in ("name","id","placeholder","ariaLabel","autocomplete","text")).lower()
