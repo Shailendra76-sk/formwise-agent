@@ -10,23 +10,31 @@ class BrowserSessionNotFound(KeyError): pass
 class BrowserSession:
     session_id:str; user_id:str; browser:Browser; context:BrowserContext; page:Page; created_at:float; last_used_at:float
 _SESSIONS={}; _LOCK=asyncio.Lock(); _PLAYWRIGHT=None
+
 def _is_blocked_ip(address):
     ip=ipaddress.ip_address(address); return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified
+
+def _is_local_demo_url(parsed):
+    return settings.environment != "production" and settings.browser_allow_local_demo_target and parsed.hostname in {"localhost","127.0.0.1"} and (parsed.port or 80) == settings.browser_demo_target_port
+
 def validate_navigation_url(url):
     parsed=urlparse(url.strip())
     if parsed.scheme not in {'http','https'} or not parsed.hostname: raise BrowserSafetyError('only http(s) URLs with a hostname are allowed')
     if parsed.username or parsed.password: raise BrowserSafetyError('URLs containing embedded credentials are blocked')
     hostname=parsed.hostname.rstrip('.').lower()
-    if hostname in {'localhost','localhost.localdomain'}: raise BrowserSafetyError('local destinations are blocked')
-    if settings.browser_block_private_networks:
+    local_demo=_is_local_demo_url(parsed)
+    if hostname in {'localhost','localhost.localdomain','127.0.0.1','::1'} and not local_demo: raise BrowserSafetyError('local destinations are blocked')
+    if settings.browser_block_private_networks and not local_demo:
         try: addresses={x[4][0] for x in socket.getaddrinfo(hostname,parsed.port or (443 if parsed.scheme=='https' else 80),type=socket.SOCK_STREAM)}
         except socket.gaierror as exc: raise BrowserSafetyError('destination hostname could not be resolved') from exc
         if not addresses or any(_is_blocked_ip(a) for a in addresses): raise BrowserSafetyError('private or otherwise unsafe network destinations are blocked')
     return url.strip()
+
 async def _guard_request(route:Route,request:Request):
     try: validate_navigation_url(request.url)
     except BrowserSafetyError: await route.abort('blockedbyclient'); return
     await route.continue_()
+
 async def _get_playwright():
     global _PLAYWRIGHT
     if _PLAYWRIGHT is None: _PLAYWRIGHT=await async_playwright().start()
@@ -52,7 +60,7 @@ async def inspect_session(session):
     page=session.page; title=await page.title(); url=validate_navigation_url(page.url)
     controls=await page.locator('input, textarea, select, button').evaluate_all("""els=>els.slice(0,200).map((el,index)=>({index,tag:el.tagName.toLowerCase(),type:el.getAttribute('type')||null,name:el.getAttribute('name')||null,id:el.id||null,autocomplete:el.getAttribute('autocomplete')||null,placeholder:el.getAttribute('placeholder')||null,ariaLabel:el.getAttribute('aria-label')||null,required:el.hasAttribute('required'),disabled:el.hasAttribute('disabled'),text:(el.innerText||el.value||'').slice(0,120)}))""")
     forms=await page.locator('form').evaluate_all("""forms=>forms.slice(0,50).map((form,index)=>({index,action:form.getAttribute('action')||null,method:(form.getAttribute('method')||'get').toLowerCase(),fields:form.querySelectorAll('input,textarea,select').length}))""")
-    return {'url':url,'title':title[:500],'forms':forms,'controls':controls,'submission_allowed':False,'warnings':['Inspection/fill are non-submitting operations in Phase 6/7.','CAPTCHA and anti-bot controls must not be bypassed.','OTP, payment, legal declarations and final submission require explicit approval.']}
+    return {'url':url,'title':title[:500],'forms':forms,'controls':controls,'submission_allowed':False,'warnings':['Inspection/fill are non-submitting operations.','CAPTCHA and anti-bot controls must not be bypassed.','OTP, payment, legal declarations and final submission require explicit approval.']}
 async def navigate_session(session,url):
     safe_url=validate_navigation_url(url); response=await session.page.goto(safe_url,wait_until='domcontentloaded'); return {'status':'ok','url':validate_navigation_url(session.page.url),'http_status':response.status if response else None}
 async def screenshot_session(session):
