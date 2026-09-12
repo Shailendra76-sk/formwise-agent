@@ -12,7 +12,7 @@ def test_self_heals_when_dom_id_and_name_change():
             "ariaLabel": "Applicant's full name",
             "label": "Applicant Full Name",
             "nearbyText": "Enter applicant full name exactly as on your identity document",
-            "placeholder": "Your legal name",
+            "placeholder": "Enter value",
         }
     ]
     mapped = map_controls(controls)
@@ -24,7 +24,7 @@ def test_self_heals_when_dom_id_and_name_change():
 def test_self_healing_uses_accessibility_context_after_selector_drift():
     controls = [
         {"index": 0, "type": "text", "id": "random-a", "label": "Unrelated field", "nearbyText": "Reference code"},
-        {"index": 1, "type": "text", "id": "random-b", "ariaLabel": "Mobile number", "nearbyText": "10 digit mobile number used for OTP", "placeholder": "Enter mobile number"},
+        {"index": 1, "type": "text", "id": "random-b", "ariaLabel": "Mobile number", "nearbyText": "10 digit mobile number used for OTP", "placeholder": "Enter value"},
     ]
     healed = resolve_field_mapping("phone", controls, preferred_index=9)
     assert healed is not None
