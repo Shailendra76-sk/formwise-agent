@@ -21,20 +21,17 @@ def validate_navigation_url(url):
     parsed=urlparse(url.strip())
     if parsed.scheme not in {'http','https'} or not parsed.hostname: raise BrowserSafetyError('only http(s) URLs with a hostname are allowed')
     if parsed.username or parsed.password: raise BrowserSafetyError('URLs containing embedded credentials are blocked')
-    hostname=parsed.hostname.rstrip('.').lower()
-    local_demo=_is_local_demo_url(parsed)
+    hostname=parsed.hostname.rstrip('.').lower(); local_demo=_is_local_demo_url(parsed)
     if hostname in {'localhost','localhost.localdomain','127.0.0.1','::1'} and not local_demo: raise BrowserSafetyError('local destinations are blocked')
     if settings.browser_block_private_networks and not local_demo:
         try: addresses={x[4][0] for x in socket.getaddrinfo(hostname,parsed.port or (443 if parsed.scheme=='https' else 80),type=socket.SOCK_STREAM)}
         except socket.gaierror as exc: raise BrowserSafetyError('destination hostname could not be resolved') from exc
         if not addresses or any(_is_blocked_ip(a) for a in addresses): raise BrowserSafetyError('private or otherwise unsafe network destinations are blocked')
     return url.strip()
-
 async def _guard_request(route:Route,request:Request):
     try: validate_navigation_url(request.url)
     except BrowserSafetyError: await route.abort('blockedbyclient'); return
     await route.continue_()
-
 async def _get_playwright():
     global _PLAYWRIGHT
     if _PLAYWRIGHT is None: _PLAYWRIGHT=await async_playwright().start()
@@ -58,7 +55,7 @@ def get_session(session_id,user_id):
     s.last_used_at=time.time(); return s
 async def inspect_session(session):
     page=session.page; title=await page.title(); url=validate_navigation_url(page.url)
-    controls=await page.locator('input, textarea, select, button').evaluate_all("""els=>els.slice(0,200).map((el,index)=>({index,tag:el.tagName.toLowerCase(),type:el.getAttribute('type')||null,name:el.getAttribute('name')||null,id:el.id||null,autocomplete:el.getAttribute('autocomplete')||null,placeholder:el.getAttribute('placeholder')||null,ariaLabel:el.getAttribute('aria-label')||null,required:el.hasAttribute('required'),disabled:el.hasAttribute('disabled'),text:(el.innerText||el.value||'').slice(0,120)}))""")
+    controls=await page.locator('input, textarea, select, button').evaluate_all("""els=>els.slice(0,200).map((el,index)=>({index,tag:el.tagName.toLowerCase(),type:el.getAttribute('type')||null,name:el.getAttribute('name')||null,id:el.id||null,autocomplete:el.getAttribute('autocomplete')||null,placeholder:el.getAttribute('placeholder')||null,ariaLabel:el.getAttribute('aria-label')||null,required:el.hasAttribute('required'),disabled:el.hasAttribute('disabled'),value:el.type==='file'?'':(el.value||''),text:(el.innerText||el.value||'').slice(0,120)}))""")
     forms=await page.locator('form').evaluate_all("""forms=>forms.slice(0,50).map((form,index)=>({index,action:form.getAttribute('action')||null,method:(form.getAttribute('method')||'get').toLowerCase(),fields:form.querySelectorAll('input,textarea,select').length}))""")
     return {'url':url,'title':title[:500],'forms':forms,'controls':controls,'submission_allowed':False,'warnings':['Inspection/fill are non-submitting operations.','CAPTCHA and anti-bot controls must not be bypassed.','OTP, payment, legal declarations and final submission require explicit approval.']}
 async def navigate_session(session,url):
@@ -72,8 +69,12 @@ async def fill_control(session,index,value):
     info=await locator.evaluate("el=>({tag:el.tagName.toLowerCase(),type:el.getAttribute('type')||'',disabled:el.disabled})")
     if info['disabled'] or info['tag']=='button' or info['type'] in {'submit','image','reset','file'}: raise BrowserSafetyError('control is not fillable')
     if info['type']=='checkbox' or info['type']=='radio': raise BrowserSafetyError('boolean controls require explicit mapping and are not auto-filled')
-    await locator.fill(value)
-    return {'index':index,'filled':True}
+    await locator.fill(value); return {'index':index,'filled':True}
+async def upload_control(session,index,file_path):
+    locator=session.page.locator('input, textarea, select, button').nth(index)
+    info=await locator.evaluate("el=>({tag:el.tagName.toLowerCase(),type:el.getAttribute('type')||'',disabled:el.disabled})")
+    if info['disabled'] or info['tag']!='input' or info['type']!='file': raise BrowserSafetyError('control is not a file upload control')
+    await locator.set_input_files(file_path); return {'index':index,'uploaded':True}
 async def close_session(session_id,user_id):
     s=get_session(session_id,user_id)
     async with _LOCK: await _close_session(s)
