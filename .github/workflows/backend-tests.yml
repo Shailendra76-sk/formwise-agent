@@ -18,13 +18,8 @@ jobs:
         working-directory: backend
     env:
       PYTHONPATH: .
-      # CI runners do not need a GUI. Keep browser tests deterministic and
-      # memory-friendly by explicitly forcing Playwright headless mode.
       FORMWISE_BROWSER_HEADLESS: "true"
-      # The local demo browser target is used only by the browser E2E test.
       FORMWISE_BROWSER_ALLOW_LOCAL_DEMO_TARGET: "true"
-      # Browser Use remains opt-in in CI; its LLM/browser workload is not part
-      # of the deterministic unit-test suite.
       FORMWISE_BROWSER_USE_ENABLED: "false"
     steps:
       - name: Checkout
@@ -37,6 +32,8 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - name: Install dependencies
         run: pip install -r requirements.txt
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
       - name: Run tests
         run: python -m pytest -q
       - name: Check migrations
