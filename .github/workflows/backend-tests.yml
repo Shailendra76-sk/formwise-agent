@@ -16,6 +16,8 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    env:
+      PYTHONPATH: .
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,6 +30,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Run tests
-        run: pytest -q
+        run: python -m pytest -q
       - name: Check migrations
         run: alembic upgrade head
