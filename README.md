@@ -1,66 +1,49 @@
 # Formwise Agent
 
-> Privacy-first AI agent for helping users fill online forms using their approved personal data and documents.
+> Privacy-first AI agent for researching and preparing online forms from user-approved personal data and documents.
 
-## Project Status
+## Current status
 
-**Phase 1 — Architecture & Project Foundation**
+The repository now contains the core end-to-end workflow: research → user confirmation → document/OCR readiness checks → controlled browser → human-supplied OTP → deterministic field mapping → sensitive-field approvals → field-by-field screenshots → final review → explicit final-submit approval.
 
-The project is being developed in controlled phases. Each phase is implemented, tested, reviewed, and only then followed by the next phase.
+The workflow is intentionally **not a CAPTCHA/anti-bot bypasser** and never invents personal data.
 
-## Product Vision
+## Example request
 
-A user should be able to securely provide their personal information and documents once, then request tasks such as:
+> “SSC CHSL 2026 ka form bhar do.”
 
-> “SSC ka form bhar do.”
+Formwise researches official information, presents it for confirmation, checks the user's private document vault, opens the supported application site, pauses for OTP, proposes verified field values, asks for sensitive-field approvals, captures screenshots while filling, and stops for final review. Submission occurs only after an explicit final approval.
 
-Formwise will prepare the task, retrieve only approved information, navigate supported websites, map verified data to form fields, and require human approval before sensitive actions such as OTP, CAPTCHA, payment, or final submission.
+## Core safety rules
 
-## Core Safety Rule
+- Never guess or fabricate personal information.
+- Never bypass CAPTCHA, reCAPTCHA, hCaptcha, or anti-bot controls.
+- OTP is entered only when the user explicitly provides it.
+- Payments are not automated.
+- Legal declarations require human review.
+- Final submission requires a short-lived, exact-payload approval token.
+- All workflow state and screenshots are private per user.
+- User ownership checks are enforced on profile, documents, approvals, browser sessions, knowledge and workflow data.
 
-**Never guess personal data.** A field may only be filled when there is an approved source, adequate confidence, and a valid mapping. Otherwise Formwise asks the user.
+## Research
 
-## High-Level Architecture
+The backend supports an optional Serper provider (`FORMWISE_SERPER_API_KEY`) and a public DuckDuckGo HTML fallback. For SSC workflows, official `ssc.gov.in` / government sources are preferred. If current research cannot be obtained, Formwise does not fabricate dates, fees, eligibility, or notification details.
 
-- Web application
-- Backend/API
-- Agent orchestration
-- AI/model provider abstraction
-- Document intelligence
-- Personal knowledge/retrieval layer
-- Browser automation
-- Form mapping engine
-- Policy, permission, and approval engine
-- Secure storage and credential vault
-- Audit and observability
+## Main workflow API
 
-## Development Phases
+- `POST /v1/workflows` — start research-driven task
+- `GET /v1/workflows/{workflow_id}` — inspect private workflow state
+- `POST /v1/workflows/{workflow_id}/confirm` — confirm research / re-check documents
+- `POST /v1/workflows/{workflow_id}/open` — open application after readiness
+- `POST /v1/workflows/{workflow_id}/otp` — continue with user-supplied OTP
+- `POST /v1/workflows/{workflow_id}/plan` — inspect and map the current form
+- `POST /v1/workflows/{workflow_id}/fill` — fill approved values and capture step screenshots
+- `GET /v1/workflows/{workflow_id}/screenshot` — authenticated latest private screenshot
+- `POST /v1/workflows/{workflow_id}/final-approval` — create exact final-submit approval
+- `POST /v1/workflows/{workflow_id}/submit` — submit only with valid final approval
 
-1. Architecture + PRD + Project Foundation
-2. Profile + Secure Document Vault + Upload
-3. OCR + Document Intelligence + Data Extraction
-4. Personal Knowledge Base + Retrieval
-5. AI Agent / Reasoning Engine
-6. Playwright Browser Agent
-7. Form Detection + Field Mapping Engine
-8. Approval + Permission + Safety Engine
-9. Real End-to-End Form Filling
-10. Security + Audit + Reliability + Recovery
-11. Full Testing + Production Deployment
+## Development
 
-## Important Security Principles
+Backend tests run through GitHub Actions. Frontend build verification runs through a separate GitHub Actions workflow.
 
-- User data isolation
-- Private document storage
-- Encryption at rest and in transit
-- No public document URLs
-- Separate credential handling from documents
-- Least-privilege access
-- Explicit approval for high-impact actions
-- Complete audit trail
-- Kill switch and task cancellation
-- Configurable confidence thresholds
-
-## Current Phase Scope
-
-Phase 1 defines the product contract, architecture, security model, repository structure, API boundaries, and implementation roadmap. It does **not** implement OCR, AI autonomy, browser automation, or real form submission.
+Production authentication requires a verified JWT; the legacy `X-User-ID` development header must be disabled in production.
