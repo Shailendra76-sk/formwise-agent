@@ -11,7 +11,7 @@ cryptography>=43,<46
 PyJWT>=2.9,<3.0
 boto3>=1.40,<2.0
 PyMuPDF>=1.24,<2.0
-Pillow==12.3.0
+Pillow>=11.1,<12.0
 pytesseract>=0.3.13,<1.0
 playwright>=1.52,<2.0
 browser-use>=0.13.10,<1.0
@@ -24,7 +24,7 @@ anthropic>=0.60,<1.0
 google-genai>=1.30,<2.0
 groq>=0.30,<2.0
 cerebras-cloud-sdk>=1.30,<2.0
-together>=1.5,<2.0
+together==1.5.35
 fireworks-ai>=0.17,<1.0
 huggingface_hub>=0.35,<2.0
 cohere>=5.15,<6.0
