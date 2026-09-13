@@ -111,7 +111,8 @@ def main() -> None:
 
     if not (DEMO_DIR / "node_modules").exists():
         print("[SETUP] Installing dummy form dependencies...")
-        subprocess.run(["npm", "install", "--no-audit", "--no-fund"], cwd=DEMO_DIR, check=True)
+        npm_cmd = "npm.cmd" if platform.system() == "Windows" else "npm"
+        subprocess.run([npm_cmd, "install", "--no-audit", "--no-fund"], cwd=DEMO_DIR, check=True)
 
     start_process(["node", "server.js"], DEMO_DIR, demo_env, "dummy form server :5000")
     wait_for(DEMO_URL)
