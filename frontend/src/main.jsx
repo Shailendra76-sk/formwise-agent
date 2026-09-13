@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
+import './admin/tailwind.css';
 import StitchShell from './stitch/StitchShell.jsx';
 import CoreWorkspaceScreen from './stitch/CoreWorkspaceScreen.jsx';
 import DocumentVaultScreen from './stitch/DocumentVaultScreen.jsx';
