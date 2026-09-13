@@ -2,8 +2,9 @@ import React from 'react';
 import LiveBrowserCanvas from '../LiveBrowserCanvas.tsx';
 
 export default function CoreWorkspaceScreen({
-  apiBase, userId, workflow, instruction, setInstruction, busy, status, profile, docs,
-  onStart, onOpen, onConfirm, onUpload, onExtract, onApprove, onFill, onFinalApproval,
+  apiBase, userId, workflow, instruction, setInstruction, busy, status, docs,
+  onStart, onOpen, onUpload, onExtract, onApprove, onFill, onFinalApproval,
+  onHumanGate, onLiveControl, resumeRequest,
 }) {
   const fills = workflow?.plan?.fills || [];
   const approvals = workflow?.fieldApprovals || {};
@@ -11,9 +12,7 @@ export default function CoreWorkspaceScreen({
   const progress = workflow?.state === 'final_review' ? 92 : workflow?.session_id ? 68 : workflow ? 36 : 10;
   return <div className="fw-core-layout">
     <section className="fw-left-rail">
-      <button className="fw-upload-card" onClick={() => document.getElementById('fw-upload')?.click()}>
-        <span className="fw-upload-plus">+</span><span><b>Instant Upload</b><small>Drop PDF, XML, image</small></span><em>RAW/OCR</em>
-      </button>
+      <button className="fw-upload-card" onClick={() => document.getElementById('fw-upload')?.click()}><span className="fw-upload-plus">+</span><span><b>Instant Upload</b><small>Drop PDF, XML, image</small></span><em>RAW/OCR</em></button>
       <input id="fw-upload" className="fw-hidden" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" onChange={onUpload}/>
       <div className="fw-search-box">⌕ <input aria-label="Smart search" placeholder="Search target schema or ask AI" value={instruction} onChange={e => setInstruction(e.target.value)} /></div>
       <div className="fw-chat-card">
@@ -24,14 +23,13 @@ export default function CoreWorkspaceScreen({
         <button className="fw-neon-btn" onClick={onStart} disabled={busy || instruction.length < 3}>Start autonomous workflow ↗</button>
       </div>
     </section>
-
     <section className="fw-center-stage">
       <div className="fw-panel-title"><div><span className="fw-kicker">AGENT // RUNNING</span><b>{workflow?.session_id ? `TARGET SESSION #${workflow.session_id}` : 'TARGET SESSION // NOT STARTED'}</b></div><span className="fw-safe-pill">⌁ Isolated headless browser</span></div>
-      {workflow?.session_id ? <LiveBrowserCanvas apiBase={apiBase} userId={userId} sessionId={workflow.session_id} onStatus={() => {}} /> : <div className="fw-empty-browser"><div>FORM FILL VIEWPORT</div><h2>Start a workflow to attach the secure live browser.</h2><p>PR #12/#13 guardrails remain authoritative: AI input stays locked unless backend broadcasts an approved human gate.</p></div>}
+      {workflow?.session_id ? <LiveBrowserCanvas apiBase={apiBase} userId={userId} sessionId={workflow.session_id} onStatus={() => {}} onHumanGate={onHumanGate} onLiveControl={onLiveControl} resumeRequest={resumeRequest} /> : <div className="fw-empty-browser"><div>FORM FILL VIEWPORT</div><h2>Start a workflow to attach the secure live browser.</h2><p>PR #12/#13 guardrails remain authoritative: AI input stays locked unless backend broadcasts an approved human gate.</p></div>}
       {workflow && <div className="fw-action-bar"><button onClick={onOpen} disabled={busy || workflow.state !== 'documents_ready'}>⌗ Inspect DOM</button><button>◉ Pause Agent</button><button onClick={() => fills[0] && onApprove(fills[0])} disabled={busy || !fills[0] || !fills[0].requires_approval}>⇥ Approve Field</button><button className="fw-neon-btn" onClick={onFill} disabled={busy || !fills.length}>Request Sign-Off</button></div>}
       {workflow && <div className="fw-field-strip">{fills.slice(0,4).map(x => <div key={x.index} className="fw-field-card"><span>{x.index + 1}. {x.field}</span><b>{x.requires_approval ? 'SENSITIVE' : 'VERIFIED'}</b><p>{String(x.value ?? '').slice(0,34)}</p><small>{approvals[x.index] ? 'APPROVED' : 'READY'}</small></div>)}</div>}
+      {status && <div className="fw-inline-status">{status}</div>}
     </section>
-
     <section className="fw-right-rail">
       <div className="fw-progress-card"><div className="fw-card-head"><h3>Progress Matrix</h3><span>STREAM: LIVE</span></div><div className="fw-log-list"><p><b>[11:42:01]</b> DOM MUTATION <span>Self-Healing active</span></p><p><b>[11:42:11]</b> SECURITY <span>Verified values never leave server</span></p><p><b>[11:42:18]</b> HUMAN GATE <span>{human.length ? human.join(', ') : 'None detected'}</span></p><p><b>[11:42:22]</b> BROWSER <span>Live frame loop connected</span></p></div></div>
       <div className="fw-progress-metric"><div><span>Progress Metric</span><b>{progress}%</b></div><div className="fw-progress-track"><i style={{width:`${progress}%`}}/></div><p>Phase {workflow?.state || 'ready'} · final submission remains explicit</p><div className="fw-mini-chart">▁▃▂▆▄▇▅█</div></div>
