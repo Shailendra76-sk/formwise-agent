@@ -28,7 +28,7 @@ def test_primary_timeout_falls_back_to_ibm_and_marks_oracle_down():
         _row("ibm-2", "ibm_cos", 2, _creds("https://ibm.example", "ibm-bucket")),
     ]
     oracle = Mock()
-    oracle.upload_fileobj.side_effect = ConnectTimeoutError(endpoint="https://oracle.example")
+    oracle.upload_fileobj.side_effect = ConnectTimeoutError(endpoint_url="https://oracle.example")
     ibm = Mock()
     client_factory = Mock(side_effect=[oracle, ibm])
 
@@ -62,7 +62,7 @@ def test_all_transient_failures_raise_and_mark_each_node_down():
         _row("ibm-2", "ibm_cos", 2, _creds("https://ibm.example", "ibm-bucket")),
     ]
     failing_client = Mock()
-    failing_client.upload_fileobj.side_effect = ConnectTimeoutError(endpoint="https://timeout.example")
+    failing_client.upload_fileobj.side_effect = ConnectTimeoutError(endpoint_url="https://timeout.example")
 
     with pytest.raises(StorageUploadError):
         StorageServiceAdapter(db, client_factory=Mock(return_value=failing_client)).upload_bytes(
