@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -14,7 +13,6 @@ from app.admin_routes import AdminContext, require_system_admin
 from app.credential_crypto import decrypt_admin_api_key
 from app.database import get_db
 from app.main import app
-from app.admin_routes import router as admin_router
 from app.config import settings
 
 
