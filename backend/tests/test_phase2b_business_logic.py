@@ -4,7 +4,6 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import httpx
 import pytest
 from sqlalchemy.exc import IntegrityError
 
@@ -104,7 +103,15 @@ def test_coupon_redeem_locks_coupon_and_credits_wallet():
         "is_active": True,
     }
     wallet = {"balance_credits": Decimal("75")}
-    db = FakeDB([Result(row=coupon), Result(row=None), Result(row=wallet)])
+    db = FakeDB(
+        [
+            Result(row=coupon),
+            Result(row=None),
+            Result(row=None),  # UPDATE coupons
+            Result(row=None),  # INSERT coupon_redemptions
+            Result(row=wallet),
+        ]
+    )
 
     result = CouponValidationEngine(db).redeem_coupon_code("user-1", "WELCOME50")
 
@@ -147,7 +154,7 @@ def test_coupon_cross_tenant_conflict_is_strict_and_rolls_back():
         "is_active": True,
     }
     duplicate_or_policy_error = IntegrityError("INSERT", {}, Exception("row level security policy denied"))
-    db = FakeDB([Result(row=coupon), Result(row=None), duplicate_or_policy_error])
+    db = FakeDB([Result(row=coupon), Result(row=None), Result(row=None), duplicate_or_policy_error])
 
     with pytest.raises(CouponTenantViolation):
         CouponValidationEngine(db).redeem_coupon_code("user-in-another-tenant", "TENANT")
@@ -163,11 +170,14 @@ def test_referral_signup_inserts_pending_reward_atomically():
         "credits_awarded": Decimal("100"),
         "status": "PENDING",
     }
-    db = FakeDB([
-        Result(row=None),
-        Result(rows=[code_owner]),
-        Result(row=reward),
-    ])
+    db = FakeDB(
+        [
+            Result(row=None),
+            Result(rows=[code_owner]),
+            Result(row=None),  # INSERT referral_networks
+            Result(row=reward),
+        ]
+    )
 
     result = ReferralRewardEngine(db).process_new_referral("REF123", "new-user")
 
