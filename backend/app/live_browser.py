@@ -13,7 +13,9 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from app.browser_agent import BrowserSafetyError, get_session
 from app.config import settings
+from app.database import SessionLocal
 from app.operational_policy import PauseReason, classify_page_text
+from app.verified_data_service import VerifiedDataResult, VerifiedDataService, VerifiedDataStatus
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,7 @@ class LiveBrowserManager:
         self._controls: dict[str, LiveControl] = {}
         self._send_locks: dict[str, asyncio.Lock] = {}
         self._channel_users: dict[str, str] = {}
+        self._pending_verified_fields: dict[str, str] = {}
         self._lock = asyncio.Lock()
 
     @staticmethod
@@ -105,6 +108,36 @@ class LiveBrowserManager:
                 "step": step,
                 "message": message,
                 "control": control.control,
+            },
+        )
+        await self._broadcast_control(session_id)
+
+    async def require_human_for_verified_data(
+        self,
+        session_id: str,
+        field_key: str,
+        result: VerifiedDataResult,
+    ) -> None:
+        """Fail closed and unlock human control when verification is unavailable."""
+        if result.status == VerifiedDataStatus.VERIFIED:
+            return
+        control = self._controls.setdefault(session_id, LiveControl())
+        self._pending_verified_fields[session_id] = field_key
+        control.control = "unlocked"
+        control.mode = "human"
+        control.paused = True
+        control.reason = f"verified_data_{result.status.lower()}"
+        control.resume_allowed = True
+        await self._send(
+            session_id,
+            {
+                "type": "human.required",
+                "state": "paused",
+                "reason": control.reason,
+                "control": "unlocked",
+                "message": result.message or f"Human verification required for {field_key}.",
+                "resume_allowed": True,
+                "field_key": field_key,
             },
         )
         await self._broadcast_control(session_id)
@@ -190,6 +223,7 @@ class LiveBrowserManager:
             self._channels.pop(session_id, None)
             self._send_locks.pop(session_id, None)
             self._channel_users.pop(session_id, None)
+            self._pending_verified_fields.pop(session_id, None)
 
     async def _handle_input(self, session_id: str, payload: dict[str, Any]) -> None:
         control = self._controls.setdefault(session_id, LiveControl())
@@ -237,14 +271,16 @@ class LiveBrowserManager:
         else:
             raise ValueError("unsupported input message")
 
-    async def _gate_satisfied(self, page: Any, reason: str) -> bool:
-        needle = "captcha" if reason == PauseReason.CAPTCHA.value else "otp"
-        return bool(
-            await page.locator("input, textarea").evaluate_all(
-                """(els,needle)=>els.some(el=>{const hay=[el.name,el.id,el.placeholder,el.getAttribute('aria-label'),el.autocomplete].filter(Boolean).join(' ').toLowerCase();return hay.includes(needle)&&String(el.value||'').trim().length>0})""",
-                needle,
-            )
-        )
+    async def _verified_data_ready(self, session_id: str) -> bool:
+        field_key = self._pending_verified_fields.get(session_id)
+        if not field_key:
+            return False
+        db = SessionLocal()
+        try:
+            result = VerifiedDataService(db).get_field(self._controls_user(session_id), field_key)
+            return result.usable
+        finally:
+            db.close()
 
     async def resume_human(self, session_id: str) -> None:
         control = self._controls.setdefault(session_id, LiveControl())
@@ -254,15 +290,28 @@ class LiveBrowserManager:
         user_id = self._controls_user(session_id)
         session = get_session(session_id, user_id)
         page = session.page
-        if not await self._gate_satisfied(page, str(control.reason)):
-            await self._send(session_id, {"type": "resume.rejected", "reason": "human_gate_not_filled", "message": "Please complete the CAPTCHA/OTP in the live browser before resuming."})
+        reason = str(control.reason)
+        if reason.startswith("verified_data_"):
+            satisfied = await self._verified_data_ready(session_id)
+            message = "Verified data is still unavailable. Resolve it and retry." if not satisfied else "Verified data is ready. AI resumed."
+        else:
+            satisfied = bool(
+                await page.locator("input, textarea").evaluate_all(
+                    """(els,needle)=>els.some(el=>{const hay=[el.name,el.id,el.placeholder,el.getAttribute('aria-label'),el.autocomplete].filter(Boolean).join(' ').toLowerCase();return hay.includes(needle)&&String(el.value||'').trim().length>0})""",
+                    "captcha" if reason == PauseReason.CAPTCHA.value else "otp",
+                )
+            )
+            message = "Please complete the CAPTCHA/OTP in the live browser before resuming." if not satisfied else "Human verification completed. AI resumed."
+        if not satisfied:
+            await self._send(session_id, {"type": "resume.rejected", "reason": "human_gate_not_satisfied", "message": message})
             return
         control.control = "locked"
         control.mode = "ai"
         control.paused = False
         control.reason = None
         control.resume_allowed = False
-        await self._send(session_id, {"type": "agent.state", "state": "running", "step": "resuming", "message": "Human verification completed. AI resumed.", "control": "locked"})
+        self._pending_verified_fields.pop(session_id, None)
+        await self._send(session_id, {"type": "agent.state", "state": "running", "step": "resuming", "message": message, "control": "locked"})
         await self._broadcast_control(session_id)
 
     async def run(self, websocket: WebSocket, record: LiveToken) -> None:

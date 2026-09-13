@@ -136,4 +136,4 @@ async def test_resume_requires_completed_human_gate(monkeypatch):
     await manager.resume_human("s1")
 
     assert websocket.messages[-1]["type"] == "resume.rejected"
-    assert websocket.messages[-1]["reason"] == "human_gate_not_filled"
+    assert websocket.messages[-1]["reason"] == "human_gate_not_satisfied"

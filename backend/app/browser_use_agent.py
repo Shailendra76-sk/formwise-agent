@@ -6,6 +6,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 from app.operational_policy import classify_page_text
+from app.verified_data_service import VerifiedDataResult, VerifiedDataService
+from app.database import SessionLocal
 
 
 class BrowserUseUnavailable(RuntimeError):
@@ -14,6 +16,31 @@ class BrowserUseUnavailable(RuntimeError):
 
 class BrowserUseSafetyError(RuntimeError):
     pass
+
+
+async def request_verified_field(
+    user_id: str,
+    field_key: str,
+    *,
+    session_id: str | None = None,
+) -> VerifiedDataResult:
+    """Read exactly one allow-listed field from the verified DB gateway.
+
+    A non-VERIFIED result fails closed and, for a live session, asks the live
+    browser manager to unlock human control. Values are never sent to the
+    browser frontend by this helper.
+    """
+    db = SessionLocal()
+    try:
+        result = VerifiedDataService(db).get_field(user_id, field_key)
+    finally:
+        db.close()
+
+    if not result.usable and session_id:
+        from app.live_browser import live_manager
+
+        await live_manager.require_human_for_verified_data(session_id, field_key, result)
+    return result
 
 
 def _validate_allowed_url(allowed_url: str) -> str:
@@ -25,12 +52,21 @@ def _validate_allowed_url(allowed_url: str) -> str:
     return allowed_url.strip()
 
 
-async def run_browser_use_task(task: str, *, allowed_url: str | None = None, mode: str = "inspect") -> dict[str, Any]:
+async def run_browser_use_task(
+    task: str,
+    *,
+    allowed_url: str | None = None,
+    mode: str = "inspect",
+    user_id: str | None = None,
+    session_id: str | None = None,
+    requested_field: str | None = None,
+) -> dict[str, Any]:
     """Run Browser Use as a semantic observer behind Formwise safety controls.
 
-    Browser Use is intentionally restricted to semantic inspection. Formwise's
-    deterministic Playwright executor remains responsible for field mutation,
-    uploads, approvals, and final submission.
+    When requested_field is present, the adapter obtains only that single
+    approved value through VerifiedDataService before the browser inspection.
+    Browser Use remains inspection-only; deterministic Formwise execution owns
+    field mutation, uploads, approvals, and final submission.
     """
     if not task or len(task) > 4000:
         raise ValueError("task must be non-empty and <= 4000 characters")
@@ -38,6 +74,20 @@ async def run_browser_use_task(task: str, *, allowed_url: str | None = None, mod
         raise BrowserUseSafetyError("only semantic inspection mode is enabled")
     if not allowed_url:
         raise ValueError("allowed_url is required for Browser Use tasks")
+    if requested_field and not user_id:
+        raise ValueError("user_id is required when requested_field is supplied")
+
+    verified_field: VerifiedDataResult | None = None
+    if requested_field:
+        verified_field = await request_verified_field(user_id, requested_field, session_id=session_id)
+        if not verified_field.usable:
+            return {
+                "status": "paused",
+                "reason": verified_field.status.lower(),
+                "message": verified_field.message,
+                "requested_field": requested_field,
+            }
+
     safe_url = _validate_allowed_url(allowed_url)
     approved_host = urlparse(safe_url).hostname.lower()
 
@@ -66,15 +116,38 @@ async def run_browser_use_task(task: str, *, allowed_url: str | None = None, mod
     history = await agent.run()
     result = history.final_result()
     decision = classify_page_text(result)
+    response: dict[str, Any] = {
+        "status": "paused" if not decision.allowed else "completed",
+        "mode": "inspect",
+        "result": result,
+        "model": model,
+    }
+    if verified_field is not None:
+        response["requested_field"] = verified_field.field_key
+        response["verified_value"] = verified_field.value if verified_field.usable else None
+        response["verified_source"] = verified_field.source
     if not decision.allowed:
-        return {
-            "status": "paused",
-            "reason": decision.reason.value if decision.reason else None,
-            "message": decision.message,
-            "result": result,
-        }
-    return {"status": "completed", "mode": "inspect", "result": result, "model": model}
+        response["reason"] = decision.reason.value if decision.reason else None
+        response["message"] = decision.message
+    return response
 
 
-def run_browser_use_task_sync(task: str, *, allowed_url: str | None = None, mode: str = "inspect") -> dict[str, Any]:
-    return asyncio.run(run_browser_use_task(task, allowed_url=allowed_url, mode=mode))
+def run_browser_use_task_sync(
+    task: str,
+    *,
+    allowed_url: str | None = None,
+    mode: str = "inspect",
+    user_id: str | None = None,
+    session_id: str | None = None,
+    requested_field: str | None = None,
+) -> dict[str, Any]:
+    return asyncio.run(
+        run_browser_use_task(
+            task,
+            allowed_url=allowed_url,
+            mode=mode,
+            user_id=user_id,
+            session_id=session_id,
+            requested_field=requested_field,
+        )
+    )
