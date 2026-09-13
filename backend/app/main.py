@@ -13,18 +13,22 @@ from app.orchestrator_screenshot_route import router as orchestrator_screenshot_
 from app.routes import router
 from app.security import validate_production_security
 from app.config import settings
+from app.database import Base, engine
+from app import db_models  # noqa: F401
 from app.universal_research_routes import router as universal_research_router
 
 @asynccontextmanager
-async def lifespan(app:FastAPI):
+async def lifespan(app: FastAPI):
     validate_production_security()
+    Base.metadata.create_all(bind=engine)
     yield
     await close_all_sessions()
 
-app=FastAPI(title='Formwise Agent API',version='0.1.0',description='Secure profile, document-vault, knowledge, agent planning, controlled browser, universal form discovery, field mapping, approval safety, end-to-end form execution and research-driven orchestration API.',lifespan=lifespan)
-origins=[x.strip() for x in settings.cors_origins.split(',') if x.strip()]
-app.add_middleware(CORSMiddleware,allow_origins=origins,allow_credentials=False,allow_methods=['GET','POST','PUT','DELETE','OPTIONS'],allow_headers=['Authorization','Content-Type','X-User-ID'])
-app.include_router(router);app.include_router(knowledge_router);app.include_router(agent_router);app.include_router(browser_router);app.include_router(form_mapping_router);app.include_router(approval_router);app.include_router(e2e_router);app.include_router(orchestrator_router);app.include_router(orchestrator_screenshot_router);app.include_router(universal_research_router)
+app = FastAPI(title='Formwise Agent API', version='0.1.0', description='Secure profile, document-vault, knowledge, agent planning, controlled browser, universal form discovery, field mapping, approval safety, end-to-end form execution and research-driven orchestration API.', lifespan=lifespan)
+origins = [x.strip() for x in settings.cors_origins.split(',') if x.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=False, allow_methods=['GET','POST','PUT','DELETE','OPTIONS'], allow_headers=['Authorization','Content-Type','X-User-ID'])
+app.include_router(router); app.include_router(knowledge_router); app.include_router(agent_router); app.include_router(browser_router); app.include_router(form_mapping_router); app.include_router(approval_router); app.include_router(e2e_router); app.include_router(orchestrator_router); app.include_router(orchestrator_screenshot_router); app.include_router(universal_research_router)
 
-@app.get('/health',tags=['system'])
-async def health()->dict[str,str]:return {'status':'ok','service':'formwise-api'}
+@app.get('/health', tags=['system'])
+async def health() -> dict[str, str]:
+    return {'status':'ok','service':'formwise-api'}
