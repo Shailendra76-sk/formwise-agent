@@ -48,7 +48,9 @@ def test_banners_are_public_read_only_when_active():
     block = SUPABASE_SQL[SUPABASE_SQL.index("create table if not exists public.dynamic_banners"):SUPABASE_SQL.index("create table if not exists public.multi_cloud_storage_nodes")]
     assert "grant select on public.dynamic_banners to anon" in block
     assert "using (is_active = true or public.is_system_admin())" in block
-    assert "create policy dynamic_banners_admin_write" in block
+    assert "create policy dynamic_banners_admin_insert" in block
+    assert "create policy dynamic_banners_admin_update" in block
+    assert "create policy dynamic_banners_admin_delete" in block
 
 
 def test_coupon_redemption_has_row_lock_and_max_use_validation():
