@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
     app_name: str = "Formwise Agent API"
     environment: str = "development"
@@ -24,6 +25,18 @@ class Settings(BaseSettings):
     serper_url: str = "https://google.serper.dev/search"
     research_timeout_seconds: float = 20.0
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
+    live_browser_enabled: bool = True
+    live_input_enabled: bool = True
+    live_frame_interval_ms: int = 250
+    live_policy_check_interval_ms: int = 750
+    live_jpeg_quality: int = 60
+    live_token_ttl_seconds: int = 300
+    live_max_connections_per_session: int = 1
+    live_max_message_bytes: int = 65536
+    live_require_secure_transport: bool = False
+
     model_config = SettingsConfigDict(env_file=".env", env_prefix="FORMWISE_", extra="ignore")
+
 
 settings = Settings()
