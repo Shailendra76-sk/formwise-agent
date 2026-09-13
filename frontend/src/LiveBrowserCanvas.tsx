@@ -7,17 +7,20 @@ type Props = {
   sessionId: string;
   onStatus?: (message: string) => void;
   onHumanGate?: (gate: { reason: string; message: string; resume_allowed: boolean }) => void;
+  onLiveControl?: (state: { control: LiveControl; mode: 'ai' | 'human'; paused: boolean }) => void;
+  resumeRequest?: number;
 };
 
 type Frame = { data: string; width: number; height: number; seq: number };
 const MOUSE_MOVE_INTERVAL_MS = 33;
 
-export default function LiveBrowserCanvas({ apiBase, userId, sessionId, onStatus, onHumanGate }: Props) {
+export default function LiveBrowserCanvas({ apiBase, userId, sessionId, onStatus, onHumanGate, onLiveControl, resumeRequest = 0 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const frameRef = useRef<Frame | null>(null);
   const rafRef = useRef<number | null>(null);
   const lastMouseMoveRef = useRef(0);
+  const lastResumeRequestRef = useRef(0);
   const dimensionsRef = useRef({ width: 1280, height: 720 });
 
   const [control, setControl] = useState<LiveControl>('locked');
@@ -29,71 +32,41 @@ export default function LiveBrowserCanvas({ apiBase, userId, sessionId, onStatus
   const [resumeAllowed, setResumeAllowed] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const publishControl = useCallback((nextControl: LiveControl, nextMode: 'ai' | 'human', paused: boolean) => {
+    setControl(nextControl); setMode(nextMode); onLiveControl?.({ control: nextControl, mode: nextMode, paused });
+  }, [onLiveControl]);
+
   const drawLatestFrame = useCallback(() => {
     rafRef.current = null;
-    const canvas = canvasRef.current;
-    const frame = frameRef.current;
+    const canvas = canvasRef.current; const frame = frameRef.current;
     if (!canvas || !frame) return;
     const image = new Image();
-    image.onload = () => {
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      if (canvas.width !== frame.width || canvas.height !== frame.height) {
-        canvas.width = frame.width;
-        canvas.height = frame.height;
-      }
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(image, 0, 0, frame.width, frame.height);
-      dimensionsRef.current = { width: frame.width, height: frame.height };
-    };
+    image.onload = () => { const ctx = canvas.getContext('2d'); if (!ctx) return; if (canvas.width !== frame.width || canvas.height !== frame.height) { canvas.width = frame.width; canvas.height = frame.height; } ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.drawImage(image, 0, 0, frame.width, frame.height); dimensionsRef.current = { width: frame.width, height: frame.height }; };
     image.src = `data:image/jpeg;base64,${frame.data}`;
   }, []);
+  const scheduleFrameDraw = useCallback(() => { if (rafRef.current === null) rafRef.current = requestAnimationFrame(drawLatestFrame); }, [drawLatestFrame]);
+  const send = useCallback((payload: Record<string, unknown>) => { const socket = socketRef.current; if (!socket || socket.readyState !== WebSocket.OPEN) return false; socket.send(JSON.stringify(payload)); return true; }, []);
 
-  const scheduleFrameDraw = useCallback(() => {
-    if (rafRef.current !== null) return;
-    rafRef.current = requestAnimationFrame(drawLatestFrame);
-  }, [drawLatestFrame]);
-
-  const send = useCallback((payload: Record<string, unknown>) => {
-    const socket = socketRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
-    socket.send(JSON.stringify(payload));
-    return true;
-  }, []);
+  useEffect(() => { if (resumeRequest && resumeRequest !== lastResumeRequestRef.current) { lastResumeRequestRef.current = resumeRequest; send({ type: 'human.resume' }); } }, [resumeRequest, send]);
 
   const connect = useCallback(async () => {
-    setError(null);
-    setPhase('Requesting secure live capability…');
+    setError(null); setPhase('Requesting secure live capability…');
     try {
       const response = await fetch(`${apiBase}/v1/browser/sessions/${sessionId}/live-token`, { method: 'POST', headers: { 'X-User-ID': userId } });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || `Live token request failed (${response.status})`);
-      const socket = new WebSocket(apiToWebSocketUrl(apiBase, sessionId, payload.live_token));
-      socketRef.current = socket;
-      setPhase('Connecting live browser…');
-      socket.onopen = () => {
-        setConnected(true); setControl('locked'); setMode('ai'); setPhase('AI control active');
-        onStatus?.('Live browser connected. AI control is locked.');
-      };
+      const socket = new WebSocket(apiToWebSocketUrl(apiBase, sessionId, payload.live_token)); socketRef.current = socket;
+      socket.onopen = () => { setConnected(true); publishControl('locked', 'ai', false); setPhase('AI control active'); onStatus?.('Live browser connected. AI control is locked.'); };
       socket.onmessage = event => {
-        let message: LiveSocketMessage;
-        try { message = JSON.parse(event.data) as LiveSocketMessage; } catch { return; }
+        let message: LiveSocketMessage; try { message = JSON.parse(event.data) as LiveSocketMessage; } catch { return; }
         switch (message.type) {
-          case 'session.ready':
-            setControl(message.control); setMode('ai'); setPhase('AI control active'); break;
-          case 'browser.frame':
-            frameRef.current = message; scheduleFrameDraw(); break;
-          case 'agent.state':
-            setControl(message.control); setPhase(message.message); setAgentMessage(message.message); break;
+          case 'session.ready': publishControl(message.control, 'ai', false); setPhase('AI control active'); break;
+          case 'browser.frame': frameRef.current = message; scheduleFrameDraw(); break;
+          case 'agent.state': publishControl(message.control, 'ai', message.state === 'paused'); setPhase(message.message); setAgentMessage(message.message); break;
           case 'control.changed':
-            setControl(message.control); setMode(message.mode); setResumeAllowed(message.resume_allowed); setPauseReason(message.reason);
-            setPhase(message.control === 'unlocked' ? 'Human control active' : message.paused ? 'Workflow paused' : 'AI control active');
-            break;
+            publishControl(message.control, message.mode, message.paused); setResumeAllowed(message.resume_allowed); setPauseReason(message.reason); setPhase(message.control === 'unlocked' ? 'Human control active' : message.paused ? 'Workflow paused' : 'AI control active'); break;
           case 'human.required':
-            setControl(message.control); setMode(message.control === 'unlocked' ? 'human' : 'ai'); setResumeAllowed(message.resume_allowed); setPauseReason(message.reason);
-            setPhase(message.resume_allowed ? 'Action required' : 'Workflow paused'); setAgentMessage(message.message); onStatus?.(message.message);
-            onHumanGate?.({ reason: message.reason, message: message.message, resume_allowed: message.resume_allowed });
-            break;
+            publishControl(message.control, message.control === 'unlocked' ? 'human' : 'ai', true); setResumeAllowed(message.resume_allowed); setPauseReason(message.reason); setPhase(message.resume_allowed ? 'Action required' : 'Workflow paused'); setAgentMessage(message.message); onStatus?.(message.message); onHumanGate?.({ reason: message.reason, message: message.message, resume_allowed: message.resume_allowed }); break;
           case 'resume.rejected': setError(message.message || 'Resume was rejected by the safety policy.'); break;
           case 'input.rejected': setError(`Remote input rejected: ${message.reason}`); break;
           case 'error': setError(`Live browser error: ${message.code}`); break;
@@ -101,37 +74,17 @@ export default function LiveBrowserCanvas({ apiBase, userId, sessionId, onStatus
         }
       };
       socket.onerror = () => { setError('Live browser connection error.'); onStatus?.('Live browser connection error.'); };
-      socket.onclose = () => { setConnected(false); setControl('locked'); setMode('ai'); setPhase('Live browser disconnected'); };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to connect to live browser.';
-      setError(message); setPhase('Live browser unavailable'); onStatus?.(message);
-    }
-  }, [apiBase, onHumanGate, onStatus, scheduleFrameDraw, sessionId, userId]);
+      socket.onclose = () => { setConnected(false); publishControl('locked', 'ai', false); setPhase('Live browser disconnected'); };
+    } catch (err) { const message = err instanceof Error ? err.message : 'Unable to connect to live browser.'; setError(message); setPhase('Live browser unavailable'); onStatus?.(message); }
+  }, [apiBase, onHumanGate, onLiveControl, onStatus, publishControl, scheduleFrameDraw, sessionId, userId]);
 
-  useEffect(() => {
-    void connect();
-    return () => { socketRef.current?.close(1000, 'component unmounted'); if (rafRef.current !== null) cancelAnimationFrame(rafRef.current); };
-  }, [connect]);
+  useEffect(() => { void connect(); return () => { socketRef.current?.close(1000, 'component unmounted'); if (rafRef.current !== null) cancelAnimationFrame(rafRef.current); }; }, [connect]);
 
   const interactive = isHumanInputEnabled(control, mode);
-  const pointFromEvent = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    return scalePoint(event.clientX, event.clientY, rect, dimensionsRef.current.width, dimensionsRef.current.height);
-  };
-  const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!interactive) return;
-    const now = performance.now(); if (now - lastMouseMoveRef.current < MOUSE_MOVE_INTERVAL_MS) return;
-    lastMouseMoveRef.current = now;
-    const point = pointFromEvent(event); send({ type: 'input.mouse', event: 'move', x: point.x, y: point.y });
-  };
-  const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!interactive) return; event.currentTarget.focus(); const point = pointFromEvent(event);
-    send({ type: 'input.mouse', event: 'down', button: event.button === 2 ? 'right' : event.button === 1 ? 'middle' : 'left', x: point.x, y: point.y });
-  };
-  const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!interactive) return; const point = pointFromEvent(event);
-    send({ type: 'input.mouse', event: 'up', button: event.button === 2 ? 'right' : event.button === 1 ? 'middle' : 'left', x: point.x, y: point.y });
-  };
+  const pointFromEvent = (event: React.PointerEvent<HTMLCanvasElement>) => { const rect = event.currentTarget.getBoundingClientRect(); return scalePoint(event.clientX, event.clientY, rect, dimensionsRef.current.width, dimensionsRef.current.height); };
+  const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => { if (!interactive) return; const now = performance.now(); if (now - lastMouseMoveRef.current < MOUSE_MOVE_INTERVAL_MS) return; lastMouseMoveRef.current = now; const point = pointFromEvent(event); send({ type: 'input.mouse', event: 'move', x: point.x, y: point.y }); };
+  const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => { if (!interactive) return; event.currentTarget.focus(); const point = pointFromEvent(event); send({ type: 'input.mouse', event: 'down', button: event.button === 2 ? 'right' : event.button === 1 ? 'middle' : 'left', x: point.x, y: point.y }); };
+  const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => { if (!interactive) return; const point = pointFromEvent(event); send({ type: 'input.mouse', event: 'up', button: event.button === 2 ? 'right' : event.button === 1 ? 'middle' : 'left', x: point.x, y: point.y }); };
   const handleWheel = (event: React.WheelEvent<HTMLCanvasElement>) => { if (!interactive) return; event.preventDefault(); send({ type: 'input.wheel', delta_x: event.deltaX, delta_y: event.deltaY }); };
   const handleKeyDown = (event: React.KeyboardEvent<HTMLCanvasElement>) => { if (!interactive) return; event.preventDefault(); send({ type: 'input.key', event: 'down', key: event.key }); };
   const handleKeyUp = (event: React.KeyboardEvent<HTMLCanvasElement>) => { if (!interactive) return; event.preventDefault(); send({ type: 'input.key', event: 'up', key: event.key }); };
