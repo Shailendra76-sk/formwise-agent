@@ -205,12 +205,22 @@ def main() -> None:
                 json={"session_id": session_id, "item": fill_item, "ttl_seconds": 600},
             )
             approval_id = approval["approval_id"]
+            # approval_for_sensitive_fill() fingerprints only these canonical fields.
             approve_payload = {
-                "action": "fill_sensitive",
-                "resource_id": session_id,
-                "payload": fill_item,
+                "index": fill_item["index"],
+                "field": fill_item["field"],
+                "value": fill_item["value"],
+                "session_id": session_id,
             }
-            api("POST", f"/v1/approvals/{approval_id}/approve", json=approve_payload)
+            api(
+                "POST",
+                f"/v1/approvals/{approval_id}/approve",
+                json={
+                    "action": "fill_sensitive",
+                    "resource_id": session_id,
+                    "payload": approve_payload,
+                },
+            )
             fill_item["approval_id"] = approval_id
         fills.append(fill_item)
 
