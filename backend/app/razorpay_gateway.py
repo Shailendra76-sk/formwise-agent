@@ -20,6 +20,10 @@ class RazorpayConfigurationError(RazorpayGatewayError):
     """Raised when the gateway is not configured safely."""
 
 
+class RazorpaySignatureError(RazorpayGatewayError):
+    """Raised when a checkout payment signature is invalid."""
+
+
 @dataclass(frozen=True)
 class RazorpayCredentials:
     key_id: str
@@ -120,6 +124,26 @@ class RazorpayGatewayService:
             credits_added=credits,
             status="PENDING",
         )
+
+    def verify_payment_signature(self, *, order_id: str, payment_id: str, signature: str) -> bool:
+        normalized_order_id = str(order_id).strip()
+        normalized_payment_id = str(payment_id).strip()
+        normalized_signature = str(signature).strip()
+        if not normalized_order_id or not normalized_payment_id or not normalized_signature:
+            raise RazorpaySignatureError("Razorpay checkout signature fields are required")
+        credentials = self._load_credentials()
+        client = self.client_factory((credentials.key_id, credentials.key_secret))
+        try:
+            client.utility.verify_payment_signature(
+                {
+                    "razorpay_order_id": normalized_order_id,
+                    "razorpay_payment_id": normalized_payment_id,
+                    "razorpay_signature": normalized_signature,
+                }
+            )
+        except Exception as exc:
+            raise RazorpaySignatureError("invalid Razorpay checkout signature") from exc
+        return True
 
     def _load_credentials(self) -> RazorpayCredentials:
         dialect = getattr(getattr(self.db, "bind", None), "dialect", None)
