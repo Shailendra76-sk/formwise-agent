@@ -67,6 +67,7 @@ class PaymentFakeDB:
             if event_id in self.events:
                 raise IntegrityError("INSERT", params, Exception("duplicate event_id"))
             self.events[event_id] = {
+                "event_id": event_id,
                 "status": "PROCESSING",
                 "payload_sha256": params["payload_hash"],
                 "event_name": params["event_name"],
