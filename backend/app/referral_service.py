@@ -136,7 +136,7 @@ class ReferralRewardEngine:
             successful_payment = self.db.execute(
                 text(
                     "SELECT transaction_id FROM transactions "
-                    "WHERE user_id = :user_id AND status IN ('SUCCESS','SUCCESSFUL') "
+                    "WHERE user_id = :user_id AND (status = 'SUCCESS' OR status = 'SUCCESSFUL') "
                     "AND amount_paid > 0 ORDER BY created_at ASC LIMIT 1 FOR UPDATE"
                 ),
                 {"user_id": referee_id},
