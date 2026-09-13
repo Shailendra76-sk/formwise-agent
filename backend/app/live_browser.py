@@ -41,6 +41,7 @@ class LiveBrowserManager:
         self._channels: dict[str, WebSocket] = {}
         self._controls: dict[str, LiveControl] = {}
         self._send_locks: dict[str, asyncio.Lock] = {}
+        self._channel_users: dict[str, str] = {}
         self._lock = asyncio.Lock()
 
     @staticmethod
@@ -124,11 +125,16 @@ class LiveBrowserManager:
         if decision.pause:
             reason = decision.reason.value if decision.reason else "unknown"
             human_reasons = {PauseReason.CAPTCHA, PauseReason.OTP, PauseReason.LEGAL_DECLARATION, PauseReason.PAYMENT}
-            control.control = "unlocked" if decision.reason in human_reasons else "locked"
-            control.mode = "human" if control.control == "unlocked" else "ai"
+            desired_control = "unlocked" if decision.reason in human_reasons else "locked"
+            desired_mode = "human" if desired_control == "unlocked" else "ai"
+            desired_resume = decision.reason in {PauseReason.CAPTCHA, PauseReason.OTP}
+            if control.paused and control.reason == reason and control.control == desired_control:
+                return
+            control.control = desired_control
+            control.mode = desired_mode
             control.paused = True
             control.reason = reason
-            control.resume_allowed = decision.reason in {PauseReason.CAPTCHA, PauseReason.OTP}
+            control.resume_allowed = desired_resume
             await self._send(
                 session_id,
                 {
@@ -141,18 +147,14 @@ class LiveBrowserManager:
                 },
             )
             await self._broadcast_control(session_id)
-            return
-        if control.paused:
-            return
 
     def _controls_user(self, session_id: str) -> str:
+        channel_user = self._channel_users.get(session_id)
+        if channel_user:
+            return channel_user
         for token in self._tokens.values():
             if token.session_id == session_id and token.expires_at > time.time():
                 return token.user_id
-        # Once a live channel is attached, its authenticated user is stored here.
-        channel_user = getattr(self, "_channel_users", {}).get(session_id)
-        if channel_user:
-            return channel_user
         raise PermissionError("live session user context unavailable")
 
     async def attach(self, record: LiveToken, websocket: WebSocket) -> None:
@@ -160,11 +162,9 @@ class LiveBrowserManager:
         async with self._lock:
             previous = self._channels.get(record.session_id)
             self._channels[record.session_id] = websocket
+            self._channel_users[record.session_id] = record.user_id
             self._controls.setdefault(record.session_id, LiveControl())
             self._send_locks.setdefault(record.session_id, asyncio.Lock())
-            if not hasattr(self, "_channel_users"):
-                self._channel_users: dict[str, str] = {}
-            self._channel_users[record.session_id] = record.user_id
         if previous is not None and previous is not websocket:
             try:
                 await previous.close(code=4001, reason="live session taken over")
@@ -189,8 +189,7 @@ class LiveBrowserManager:
                 return
             self._channels.pop(session_id, None)
             self._send_locks.pop(session_id, None)
-            if hasattr(self, "_channel_users"):
-                self._channel_users.pop(session_id, None)
+            self._channel_users.pop(session_id, None)
 
     async def _handle_input(self, session_id: str, payload: dict[str, Any]) -> None:
         control = self._controls.setdefault(session_id, LiveControl())
@@ -238,6 +237,15 @@ class LiveBrowserManager:
         else:
             raise ValueError("unsupported input message")
 
+    async def _gate_satisfied(self, page: Any, reason: str) -> bool:
+        needle = "captcha" if reason == PauseReason.CAPTCHA.value else "otp"
+        return bool(
+            await page.locator("input, textarea").evaluate_all(
+                """(els,needle)=>els.some(el=>{const hay=[el.name,el.id,el.placeholder,el.getAttribute('aria-label'),el.autocomplete].filter(Boolean).join(' ').toLowerCase();return hay.includes(needle)&&String(el.value||'').trim().length>0})""",
+                needle,
+            )
+        )
+
     async def resume_human(self, session_id: str) -> None:
         control = self._controls.setdefault(session_id, LiveControl())
         if not control.paused or not control.resume_allowed:
@@ -246,13 +254,8 @@ class LiveBrowserManager:
         user_id = self._controls_user(session_id)
         session = get_session(session_id, user_id)
         page = session.page
-        try:
-            body = await page.locator("body").inner_text(timeout=1000)
-        except Exception:
-            body = ""
-        decision = classify_page_text((await page.title()) + "\n" + body[:12000])
-        if decision.pause:
-            await self._send(session_id, {"type": "resume.rejected", "reason": decision.reason.value if decision.reason else "policy_pause", "message": decision.message})
+        if not await self._gate_satisfied(page, str(control.reason)):
+            await self._send(session_id, {"type": "resume.rejected", "reason": "human_gate_not_filled", "message": "Please complete the CAPTCHA/OTP in the live browser before resuming."})
             return
         control.control = "locked"
         control.mode = "ai"
@@ -271,7 +274,11 @@ class LiveBrowserManager:
                 if len(raw.encode("utf-8")) > settings.live_max_message_bytes:
                     await self._send(record.session_id, {"type": "error", "code": "message_too_large"})
                     continue
-                payload = json.loads(raw)
+                try:
+                    payload = json.loads(raw)
+                except json.JSONDecodeError:
+                    await self._send(record.session_id, {"type": "error", "code": "invalid_json"})
+                    continue
                 message_type = payload.get("type")
                 if message_type == "ping":
                     await self._send(record.session_id, {"type": "pong", "timestamp": int(time.time() * 1000)})
