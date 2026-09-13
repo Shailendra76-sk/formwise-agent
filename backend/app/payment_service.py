@@ -45,25 +45,13 @@ class PaymentSettlementResult:
 
 
 class PaymentService:
-    """Concurrency-safe Razorpay settlement state machine.
-
-    The durable paid state is SUCCESS to preserve the Phase 2-B referral contract. The transaction row,
-    destination wallet and referral payout are committed in one DB transaction. External email delivery
-    is intentionally performed after commit so a mail outage cannot roll back a financial credit.
-    """
+    """Concurrency-safe Razorpay transaction state machine."""
 
     def __init__(self, db: Session, *, referral_reward_credits: Decimal | int | float = Decimal("100")) -> None:
         self.db = db
         self.referral_reward_credits = referral_reward_credits
 
-    def process_order_paid(
-        self,
-        *,
-        razorpay_order_id: str,
-        razorpay_payment_id: str,
-        paid_amount_paise: int,
-        commit: bool = True,
-    ) -> PaymentSettlementResult:
+    def process_order_paid(self, *, razorpay_order_id: str, razorpay_payment_id: str, paid_amount_paise: int, commit: bool = True) -> PaymentSettlementResult:
         order_id = str(razorpay_order_id).strip()
         payment_id = str(razorpay_payment_id).strip()
         if not order_id or not payment_id:
@@ -72,11 +60,7 @@ class PaymentService:
             raise ValueError("paid_amount_paise must be positive")
 
         row = self.db.execute(
-            text(
-                "SELECT transaction_id, user_id, amount_paid, credits_added, status, user_email, "
-                "razorpay_payment_id FROM transactions "
-                "WHERE razorpay_order_id = :order_id FOR UPDATE"
-            ),
+            text("SELECT transaction_id, user_id, amount_paid, credits_added, status, user_email, razorpay_payment_id FROM transactions WHERE razorpay_order_id = :order_id FOR UPDATE"),
             {"order_id": order_id},
         ).mappings().first()
         if not row:
@@ -106,22 +90,11 @@ class PaymentService:
             raise PaymentAmountMismatch("Razorpay payment amount does not match the registered order")
 
         self.db.execute(
-            text(
-                "UPDATE transactions SET status = 'PROCESSING', razorpay_payment_id = :payment_id, "
-                "updated_at = CURRENT_TIMESTAMP WHERE transaction_id = :transaction_id "
-                "AND status IN ('PENDING','PROCESSING')"
-            ),
+            text("UPDATE transactions SET status = 'PROCESSING', razorpay_payment_id = :payment_id, updated_at = CURRENT_TIMESTAMP WHERE transaction_id = :transaction_id AND status IN ('PENDING','PROCESSING')"),
             {"payment_id": payment_id, "transaction_id": row["transaction_id"]},
         )
-
         wallet = self.db.execute(
-            text(
-                "INSERT INTO user_wallets (user_id, balance_credits, updated_at) "
-                "VALUES (:user_id, :credits, CURRENT_TIMESTAMP) "
-                "ON CONFLICT (user_id) DO UPDATE SET "
-                "balance_credits = user_wallets.balance_credits + EXCLUDED.balance_credits, "
-                "updated_at = CURRENT_TIMESTAMP RETURNING balance_credits"
-            ),
+            text("INSERT INTO user_wallets (user_id, balance_credits, updated_at) VALUES (:user_id, :credits, CURRENT_TIMESTAMP) ON CONFLICT (user_id) DO UPDATE SET balance_credits = user_wallets.balance_credits + EXCLUDED.balance_credits, updated_at = CURRENT_TIMESTAMP RETURNING balance_credits"),
             {"user_id": row["user_id"], "credits": row["credits_added"]},
         ).mappings().first()
         if not wallet:
@@ -130,67 +103,68 @@ class PaymentService:
 
         referral_claimed = False
         try:
-            referral_result = ReferralRewardEngine(
-                self.db,
-                reward_credits=self.referral_reward_credits,
-            ).trigger_referral_payout(str(row["user_id"]), auto_commit=False)
+            referral_result = ReferralRewardEngine(self.db, reward_credits=self.referral_reward_credits).trigger_referral_payout(str(row["user_id"]), auto_commit=False)
             referral_claimed = referral_result.status == "CLAIMED"
         except (ReferralRewardUnavailable, ReferralAlreadyProcessed):
-            # Referral absence is not a payment failure. A successful payment must remain successful.
             referral_claimed = False
 
         self.db.execute(
-            text(
-                "UPDATE transactions SET status = 'SUCCESS', updated_at = CURRENT_TIMESTAMP "
-                "WHERE transaction_id = :transaction_id AND status = 'PROCESSING'"
-            ),
+            text("UPDATE transactions SET status = 'SUCCESS', updated_at = CURRENT_TIMESTAMP WHERE transaction_id = :transaction_id AND status = 'PROCESSING'"),
             {"transaction_id": row["transaction_id"]},
         )
         if commit:
             self.db.commit()
-
         return PaymentSettlementResult(
-            transaction_id=str(row["transaction_id"]),
-            user_id=str(row["user_id"]),
-            order_id=order_id,
-            payment_id=payment_id,
-            amount_in_inr=self._decimal(row["amount_paid"]),
-            credits_added=self._decimal(row["credits_added"]),
-            wallet_balance_credits=self._decimal(wallet["balance_credits"]),
-            status="SUCCESS",
-            referral_reward_claimed=referral_claimed,
-            user_email=(str(row["user_email"]).strip() if row["user_email"] else None),
+            transaction_id=str(row["transaction_id"]), user_id=str(row["user_id"]), order_id=order_id, payment_id=payment_id,
+            amount_in_inr=self._decimal(row["amount_paid"]), credits_added=self._decimal(row["credits_added"]),
+            wallet_balance_credits=self._decimal(wallet["balance_credits"]), status="SUCCESS",
+            referral_reward_claimed=referral_claimed, user_email=(str(row["user_email"]).strip() if row["user_email"] else None),
         )
+
+    def process_payment_failed(self, *, razorpay_order_id: str, razorpay_payment_id: str | None = None, commit: bool = True) -> str:
+        order_id = str(razorpay_order_id).strip()
+        if not order_id:
+            raise ValueError("razorpay_order_id is required")
+        row = self.db.execute(
+            text("SELECT transaction_id, status FROM transactions WHERE razorpay_order_id = :order_id FOR UPDATE"),
+            {"order_id": order_id},
+        ).mappings().first()
+        if not row:
+            self._rollback_if_needed(commit)
+            raise PaymentOrderNotFound("Razorpay order is not registered in the local ledger")
+        status = str(row["status"])
+        if status == "SUCCESS":
+            self._rollback_if_needed(commit)
+            raise PaymentStateConflict("a successful transaction cannot transition to FAILED")
+        if status == "FAILED":
+            if commit:
+                self.db.commit()
+            return "FAILED"
+        if status not in {"PENDING", "PROCESSING"}:
+            self._rollback_if_needed(commit)
+            raise PaymentStateConflict(f"unsupported transaction state: {status}")
+        self.db.execute(
+            text("UPDATE transactions SET status = 'FAILED', razorpay_payment_id = COALESCE(:payment_id, razorpay_payment_id), updated_at = CURRENT_TIMESTAMP WHERE transaction_id = :transaction_id AND status IN ('PENDING','PROCESSING')"),
+            {"payment_id": razorpay_payment_id, "transaction_id": row["transaction_id"]},
+        )
+        if commit:
+            self.db.commit()
+        return "FAILED"
 
     def mark_receipt_sent(self, transaction_id: str) -> None:
-        self.db.execute(
-            text(
-                "UPDATE transactions SET receipt_sent_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP "
-                "WHERE transaction_id = :transaction_id AND status = 'SUCCESS' AND receipt_sent_at IS NULL"
-            ),
-            {"transaction_id": str(transaction_id)},
-        )
+        self.db.execute(text("UPDATE transactions SET receipt_sent_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE transaction_id = :transaction_id AND status = 'SUCCESS' AND receipt_sent_at IS NULL"), {"transaction_id": str(transaction_id)})
         self.db.commit()
 
     def _wallet_balance(self, user_id: str) -> Decimal:
-        wallet = self.db.execute(
-            text("SELECT balance_credits FROM user_wallets WHERE user_id = :user_id FOR UPDATE"),
-            {"user_id": user_id},
-        ).mappings().first()
+        wallet = self.db.execute(text("SELECT balance_credits FROM user_wallets WHERE user_id = :user_id FOR UPDATE"), {"user_id": user_id}).mappings().first()
         return self._decimal(wallet["balance_credits"]) if wallet else Decimal("0")
 
     @staticmethod
     def _result_from_row(row: Any, order_id: str, payment_id: str, wallet_balance: Decimal, referral_claimed: bool) -> PaymentSettlementResult:
         return PaymentSettlementResult(
-            transaction_id=str(row["transaction_id"]),
-            user_id=str(row["user_id"]),
-            order_id=order_id,
-            payment_id=payment_id,
-            amount_in_inr=PaymentService._decimal(row["amount_paid"]),
-            credits_added=PaymentService._decimal(row["credits_added"]),
-            wallet_balance_credits=wallet_balance,
-            status="SUCCESS",
-            referral_reward_claimed=referral_claimed,
+            transaction_id=str(row["transaction_id"]), user_id=str(row["user_id"]), order_id=order_id, payment_id=payment_id,
+            amount_in_inr=PaymentService._decimal(row["amount_paid"]), credits_added=PaymentService._decimal(row["credits_added"]),
+            wallet_balance_credits=wallet_balance, status="SUCCESS", referral_reward_claimed=referral_claimed,
             user_email=(str(row["user_email"]).strip() if row["user_email"] else None),
         )
 
