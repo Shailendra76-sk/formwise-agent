@@ -51,8 +51,10 @@ async def live_browser_socket(websocket: WebSocket, session_id: str, token: str)
         await websocket.close(code=1008, reason="live browser streaming is disabled")
         return
     if settings.live_require_secure_transport:
-        forwarded_proto = websocket.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
-        if forwarded_proto != "https":
+        proto = websocket.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+        if not proto:
+            proto = getattr(websocket.url, "scheme", "").lower()
+        if proto != "https":
             await websocket.close(code=1008, reason="HTTPS/WSS is required")
             return
     try:
