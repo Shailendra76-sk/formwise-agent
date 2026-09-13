@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     live_max_message_bytes: int = 65536
     live_require_secure_transport: bool = False
 
+    ai_failover_budget_seconds: float = 1.8
+    ai_provider_timeout_seconds: float = 0.75
+    ai_route_vision_form_reading: str = "gemini,groq,anthropic,openrouter"
+    ai_route_document_processing: str = "base64_ai,azure_document_intelligence,aws_bedrock,gemini"
+    ai_route_semantic_analysis: str = "anthropic,openai,gemini,mistral,cohere"
+    ai_route_general: str = "openai,anthropic,gemini,groq,openrouter"
+
     model_config = SettingsConfigDict(env_file=".env", env_prefix="FORMWISE_", extra="ignore")
 
 
