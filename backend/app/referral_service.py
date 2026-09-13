@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Any, Mapping
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -127,7 +127,7 @@ class ReferralRewardEngine:
             self.db.rollback()
             raise ReferralError("referral signup processing failed") from exc
 
-    def trigger_referral_payout(self, new_user_id: str) -> ReferralPayoutResult:
+    def trigger_referral_payout(self, new_user_id: str, *, auto_commit: bool = True) -> ReferralPayoutResult:
         referee_id = str(new_user_id).strip()
         if not referee_id:
             raise ValueError("new_user_id is required")
@@ -136,13 +136,14 @@ class ReferralRewardEngine:
             successful_payment = self.db.execute(
                 text(
                     "SELECT transaction_id FROM transactions "
-                    "WHERE user_id = :user_id AND status = 'SUCCESS' "
+                    "WHERE user_id = :user_id AND status IN ('SUCCESS','SUCCESSFUL') "
                     "AND amount_paid > 0 ORDER BY created_at ASC LIMIT 1 FOR UPDATE"
                 ),
                 {"user_id": referee_id},
             ).mappings().first()
             if not successful_payment:
-                self.db.rollback()
+                if auto_commit:
+                    self.db.rollback()
                 raise ReferralRewardUnavailable("referee has not completed a paid transaction")
 
             reward = self.db.execute(
@@ -167,7 +168,8 @@ class ReferralRewardEngine:
                     ),
                     {"referee_id": referee_id},
                 ).mappings().first()
-                self.db.rollback()
+                if auto_commit:
+                    self.db.rollback()
                 if already_claimed:
                     raise ReferralAlreadyProcessed("referral reward has already been claimed")
                 raise ReferralRewardUnavailable("no pending referral reward exists")
@@ -183,14 +185,16 @@ class ReferralRewardEngine:
                 {"user_id": reward["referrer_id"], "credits": reward["credits_awarded"]},
             ).mappings().first()
             if not wallet:
-                self.db.rollback()
+                if auto_commit:
+                    self.db.rollback()
                 raise ReferralError("referrer wallet update did not return a balance")
 
             self.db.execute(
                 text("UPDATE referral_rewards SET status = 'CLAIMED' WHERE reward_id = :reward_id AND status = 'PENDING'"),
                 {"reward_id": reward["reward_id"]},
             )
-            self.db.commit()
+            if auto_commit:
+                self.db.commit()
             return ReferralPayoutResult(
                 reward_id=str(reward["reward_id"]),
                 referrer_id=str(reward["referrer_id"]),
@@ -202,7 +206,8 @@ class ReferralRewardEngine:
         except ReferralError:
             raise
         except Exception as exc:
-            self.db.rollback()
+            if auto_commit:
+                self.db.rollback()
             raise ReferralError("referral payout processing failed") from exc
 
     @staticmethod
