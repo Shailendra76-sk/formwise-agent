@@ -2,7 +2,7 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Formwise Demo Application</title>
 <style>body{font-family:Arial,sans-serif;max-width:520px;margin:40px auto;padding:0 16px}label{display:block;margin:14px 0 4px;font-weight:700}input{width:100%;padding:9px;box-sizing:border-box}button{margin-top:18px;padding:10px 16px} .captcha{padding:12px;background:#eee;font:700 22px monospace;letter-spacing:5px}.demo-note{padding:10px;border:1px solid #999;background:#f7f7f7}</style></head>
 <body><h1>Formwise Demo Application</h1><p>This local-only target is for safe end-to-end testing.</p>
-<p id="self-heal-note" class="demo-note" hidden>SELF-HEALING MODE: machine IDs/names were intentionally changed; visible labels and accessibility context remain stable.</p>
+<p id="self-heal-note" class="demo-note" hidden>SELF-HEALING MODE: machine IDs/names and machine hints were intentionally changed; visible labels and accessibility context remain stable.</p>
 <form method="post" action="/submit" enctype="multipart/form-data">
 <label>Full Name</label><input id="fullName" name="fullName" autocomplete="name" aria-label="Full Name">
 <label>Date of Birth</label><input id="dob" name="dob" type="date" autocomplete="bday" aria-label="Date of Birth">
@@ -17,9 +17,18 @@
 async function sendOtp(){await fetch('/generate-otp');alert('Demo OTP generated. Check the demo server console.');}
 if(new URLSearchParams(location.search).get('self_heal')==='1'){
   document.getElementById('self-heal-note').hidden=false;
-  const mutations={fullName:['fw_runtime_name_91','fw_runtime_id_91'],dob:['fw_runtime_birth_42','fw_runtime_id_42'],email:['fw_runtime_contact_73','fw_runtime_id_73'],mobile:['fw_runtime_phone_64','fw_runtime_id_64']};
-  for(const [id,[name,newId]] of Object.entries(mutations)){
-    const el=document.getElementById(id); el.name=name; el.id=newId;
+  const mutations={
+    fullName:['fw_runtime_name_91','fw_runtime_id_91','text','runtime-name'],
+    dob:['fw_runtime_birth_42','fw_runtime_id_42','text','runtime-birth'],
+    email:['fw_runtime_contact_73','fw_runtime_id_73','text','runtime-contact'],
+    mobile:['fw_runtime_phone_64','fw_runtime_id_64','text','runtime-phone']
+  };
+  for(const [id,[name,newId,newType,newAutocomplete]] of Object.entries(mutations)){
+    const el=document.getElementById(id);
+    el.name=name;
+    el.id=newId;
+    el.type=newType;
+    el.setAttribute('autocomplete',newAutocomplete);
   }
 }
 </script></body></html>
