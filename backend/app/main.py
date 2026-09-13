@@ -18,6 +18,7 @@ from app.security import validate_production_security
 from app.config import settings
 from app.database import Base, engine
 from app import db_models  # noqa: F401
+from app.payment_routes import router as payment_router
 from app.universal_research_routes import router as universal_research_router
 
 
@@ -41,7 +42,7 @@ app.add_middleware(
     allow_origins=origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-User-ID"],
+    allow_headers=["Authorization", "Content-Type", "X-User-ID", "X-Razorpay-Signature", "X-Razorpay-Event-Id"],
 )
 app.include_router(router)
 app.include_router(knowledge_router)
@@ -54,6 +55,7 @@ app.include_router(e2e_router)
 app.include_router(orchestrator_router)
 app.include_router(orchestrator_screenshot_router)
 app.include_router(universal_research_router)
+app.include_router(payment_router)
 
 
 @app.get("/health", tags=["system"])
