@@ -99,8 +99,15 @@ class PaymentFakeDB:
             return Result(row={"balance_credits": self.wallet_balance})
         if "select balance_credits from user_wallets" in normalized:
             return Result(row={"balance_credits": self.wallet_balance})
-        if "from transactions" in normalized and "status in ('success','successful')" in normalized:
-            return Result(row=None)
+        if "from transactions" in normalized and (
+            "status = 'success' or status = 'successful'" in normalized
+            or "status in ('success','successful')" in normalized
+        ):
+            # Phase 2-B referral logic accepts both legacy SUCCESSFUL and current SUCCESS
+            # states. Returning the durable payment row keeps the Phase 2-C fixture compatible
+            # with both state spellings while allowing the referral reward query to remain empty
+            # when this user has no referral attribution.
+            return Result(row={"transaction_id": self.transaction["transaction_id"]})
         if "from referral_rewards" in normalized:
             return Result(row=None)
         if normalized.startswith("insert into transactions"):
