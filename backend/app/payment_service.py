@@ -47,10 +47,9 @@ class PaymentSettlementResult:
 class PaymentService:
     """Concurrency-safe Razorpay settlement state machine.
 
-    The durable paid state is SUCCESS to preserve the Phase 2-B referral contract. The
-    transaction row, destination wallet and referral payout are committed in one DB transaction.
-    External email delivery is intentionally performed after commit so a mail outage cannot roll
-    back a financial credit or create an inconsistent ledger.
+    The durable paid state is SUCCESS to preserve the Phase 2-B referral contract. The transaction row,
+    destination wallet and referral payout are committed in one DB transaction. External email delivery
+    is intentionally performed after commit so a mail outage cannot roll back a financial credit.
     """
 
     def __init__(self, db: Session, *, referral_reward_credits: Decimal | int | float = Decimal("100")) -> None:
@@ -88,7 +87,10 @@ class PaymentService:
         if status == "SUCCESS":
             existing_payment_id = str(row["razorpay_payment_id"] or "")
             if existing_payment_id == payment_id:
-                return self._result_from_row(row, order_id, payment_id, self._wallet_balance(str(row["user_id"])), False)
+                wallet_balance = self._wallet_balance(str(row["user_id"]))
+                if commit:
+                    self.db.commit()
+                return self._result_from_row(row, order_id, payment_id, wallet_balance, False)
             self._rollback_if_needed(commit)
             raise PaymentStateConflict("a successful transaction cannot be rebound to another payment id")
         if status == "FAILED":
