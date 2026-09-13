@@ -38,6 +38,8 @@ def test_primary_timeout_falls_back_to_ibm_and_marks_oracle_down():
     assert url == "https://ibm.example/public/users/u1/result.pdf"
     oracle.upload_fileobj.assert_called_once()
     ibm.upload_fileobj.assert_called_once()
+    assert ibm.upload_fileobj.call_args.args[2] == "users/u1/result.pdf"
+    assert ibm.upload_fileobj.call_args.kwargs["ExtraArgs"] == {"ContentType": "application/pdf"}
     assert db.commit.call_count == 1
     update_calls = [call for call in db.execute.call_args_list if len(call.args) > 1]
     assert any(call.args[1] == {"node_id": "oracle-1"} for call in update_calls)
