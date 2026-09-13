@@ -22,11 +22,12 @@ def _adapter(rows, *, routes=None, decryptor=None, audit=None, budget=1.8):
     db = Mock()
     db.bind.dialect.name = "postgresql"
     db.execute.return_value.mappings.return_value.first.side_effect = rows
+    audit_sink = audit.append if audit is not None else (lambda event: None)
     return MultiAIProviderAdapter(
         db,
         credential_decryptor=decryptor or (lambda value: value),
         routes=routes or {"vision_form_reading": ("openai", "gemini")},
-        audit_sink=audit or (lambda event: None),
+        audit_sink=audit_sink,
         failover_budget_seconds=budget,
     ), db
 
