@@ -1,19 +1,88 @@
-import React,{useEffect,useState}from'react';import{createRoot}from'react-dom/client';import LiveBrowserCanvas from'./LiveBrowserCanvas.tsx';import'./style.css';
-const API=localStorage.getItem('formwise_api')||'http://localhost:8000';const uidKey='formwise_user';const getUid=()=>{let u=localStorage.getItem(uidKey);if(!u){u='demo-'+crypto.randomUUID();localStorage.setItem(uidKey,u)}return u};const uid=getUid();
-async function api(path,opts={}){const h={'X-User-ID':uid,...(opts.headers||{})};if(opts.body&&!h['Content-Type'])h['Content-Type']='application/json';const r=await fetch(API+path,{...opts,headers:h});let d={};try{d=await r.json()}catch{}if(!r.ok)throw Error(d.detail||`Request failed (${r.status})`);return d}
-function App(){const[profile,setProfile]=useState({full_name:'',date_of_birth:'',gender:'',email:'',phone:''}),[docs,setDocs]=useState([]),[instruction,setInstruction]=useState('Formwise Demo form bhar do'),[workflow,setWorkflow]=useState(null),[gateValue,setGateValue]=useState(''),[approval,setApproval]=useState(null),[status,setStatus]=useState('Ready'),[busy,setBusy]=useState(false),[screenshot,setScreenshot]=useState('');
-const load=async()=>{try{setProfile(await api('/v1/profile'));setDocs(await api('/v1/documents'))}catch(e){setStatus(e.message)}};useEffect(()=>{load()},[]);
-const saveProfile=async()=>{setBusy(true);try{setProfile(await api('/v1/profile',{method:'PUT',body:JSON.stringify(profile)}));setStatus('Profile saved.')}catch(e){setStatus(e.message)}finally{setBusy(false)}};
-const upload=async e=>{const f=e.target.files?.[0];if(!f)return;setBusy(true);try{const fd=new FormData();fd.append('file',f);const r=await fetch(API+'/v1/documents',{method:'POST',headers:{'X-User-ID':uid},body:fd});const d=await r.json();if(!r.ok)throw Error(d.detail);setDocs(x=>[d,...x]);setStatus('Document uploaded. Run Extract/OCR.')}catch(e){setStatus(e.message)}finally{setBusy(false)}};
-const extract=async id=>{setBusy(true);try{await api(`/v1/documents/${id}/extract`,{method:'POST'});await api('/v1/knowledge/reindex',{method:'POST'});await load();setStatus('OCR completed and knowledge index refreshed.')}catch(e){setStatus(e.message)}finally{setBusy(false)}};
-const start=async()=>{setBusy(true);try{const d=await api('/v1/workflows',{method:'POST',body:JSON.stringify({instruction})});setWorkflow(d);setApproval(null);setStatus('Research ready. Review before continuing.')}catch(e){setStatus(e.message)}finally{setBusy(false)}};
-const confirm=async confirmed=>{setBusy(true);try{const d=await api(`/v1/workflows/${workflow.workflow_id}/confirm`,{method:'POST',body:JSON.stringify({confirmed})});setWorkflow(d);setStatus(d.state==='documents_missing'?'Complete the checklist first.':'Documents ready.')}catch(e){setStatus(e.message)}finally{setBusy(false)}};
-const openApp=async()=>{setBusy(true);try{const d=await api(`/v1/workflows/${workflow.workflow_id}/open`,{method:'POST'});const p=await api(`/v1/workflows/${d.workflow_id}/plan`,{method:'POST'});setWorkflow(p);setStatus('Target inspected. Review fields and human gates.')}catch(e){setStatus(e.message)}finally{setBusy(false)}};
-const submitGate=async kind=>{setBusy(true);try{const d=await api(`/v1/workflows/${workflow.workflow_id}/human`,{method:'POST',body:JSON.stringify({kind,value:gateValue})});setGateValue('');const p=await api(`/v1/workflows/${d.workflow_id}/plan`,{method:'POST'});setWorkflow(p);setStatus(`${kind.toUpperCase()} accepted only as your input.`)}catch(e){setStatus(e.message)}finally{setBusy(false)}};
-const approveField=async item=>{setBusy(true);try{const a=await api('/v1/e2e/approvals',{method:'POST',body:JSON.stringify({session_id:workflow.session_id,item,ttl_seconds:600})});const payload={index:item.index,field:item.field,value:item.value,session_id:workflow.session_id};await api(`/v1/approvals/${a.approval_id}/approve`,{method:'POST',body:JSON.stringify({action:'fill_sensitive',resource_id:workflow.session_id,payload})});setWorkflow(p=>({...p,fieldApprovals:{...(p.fieldApprovals||{}),[item.index]:a.approval_id}}));setStatus(`Approved ${item.field}.`)}catch(e){setStatus(e.message)}finally{setBusy(false)}};
-const refreshShot=async w=>{try{const r=await fetch(`${API}/v1/workflows/${w.workflow_id}/screenshot`,{headers:{'X-User-ID':uid},cache:'no-store'});if(r.ok){if(screenshot)URL.revokeObjectURL(screenshot);setScreenshot(URL.createObjectURL(await r.blob()))}}catch{}};
-const fill=async()=>{setBusy(true);try{const fills=(workflow.plan?.fills||[]).filter(x=>!x.requires_approval||workflow.fieldApprovals?.[x.index]).map(x=>({...x,approval_id:workflow.fieldApprovals?.[x.index]}));const d=await api(`/v1/workflows/${workflow.workflow_id}/fill`,{method:'POST',body:JSON.stringify({fills})});setWorkflow(d);await refreshShot(d);setStatus(d.state==='final_review'?'All automated fields filled. Final review required.':`Filled approved fields. Human gate: ${(d.result?.human_required||[]).join(', ')||'none'}.`)}catch(e){setStatus(e.message)}finally{setBusy(false)}};
-const finalApproval=async()=>{setBusy(true);try{const a=await api(`/v1/workflows/${workflow.workflow_id}/final-approval`,{method:'POST'});setApproval(a);setStatus('Final approval prepared. Review screenshot.')}catch(e){setStatus(e.message)}finally{setBusy(false)}};
-const finalSubmit=async()=>{setBusy(true);try{const d=await api(`/v1/workflows/${workflow.workflow_id}/submit`,{method:'POST',body:JSON.stringify({approval_id:approval.approval_id})});setWorkflow(d);await refreshShot(d);setStatus('Submitted only after explicit final approval.')}catch(e){setStatus(e.message)}finally{setBusy(false)}};
-const facts=workflow?.research?.facts||{};const human=(workflow?.plan?.human_required||workflow?.result?.human_required||[]);const gate=workflow?.state==='otp_required'?'otp':workflow?.state==='captcha_required'?'captcha':null;return <div className="app"><header><div><b>Formwise</b><span> Agent</span><p>Research → Vault → Browser → Human Gate → Fill → Review → Submit</p></div><div className="pill">{status}</div></header><main><section className="hero"><h1>Tell Formwise what form you need.</h1><p>Use <b>“Formwise Demo form bhar do”</b> for the safe local end-to-end test. Real government targets need an approved site adapter and must follow their rules.</p><textarea value={instruction}onChange={e=>setInstruction(e.target.value)}/><button className="primary"onClick={start}disabled={busy||instruction.length<3}>Start workflow</button></section><div className="grid"><section className="card"><h2>1. Personal profile</h2>{['full_name','date_of_birth','gender','email','phone'].map(k=><label key={k}>{k.replaceAll('_',' ')}<input value={profile[k]||''}onChange={e=>setProfile({...profile,[k]:e.target.value})}/></label>)}<button onClick={saveProfile}disabled={busy}>Save profile</button></section><section className="card"><h2>2. Secure document vault</h2><input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp"onChange={upload}/>{docs.map(d=><div className="row"key={d.id}><span>{d.original_filename}</span><small>{d.status}</small><button onClick={()=>extract(d.id)}disabled={busy}>Extract/OCR</button></div>)}</section>{workflow&&<section className="card wide"><h2>3. Workflow: {workflow.exam} {workflow.year}</h2><div className="steps"><span>Research</span><span>Documents</span><span>Browser</span><span>Human gate</span><span>Fill</span><span>Review</span><span>Submit</span></div><div className="research"><h3>Research</h3><p>Status: <b>{workflow.research?.status}</b> · Notification: <b>{workflow.research?.notification_found?'FOUND':'NOT CONFIRMED'}</b></p><div className="facts"><b>Window:</b> {facts.application_window||'Not extracted'} · <b>Last date:</b> {facts.last_date||'Not extracted'} · <b>Fee:</b> {facts.fee_rupees?`₹${facts.fee_rupees}`:'Not extracted'} · <b>Age:</b> {facts.age_limit||'Not extracted'} · <b>Education:</b> {facts.education_requirement||'Not extracted'}</div>{workflow.research?.notification&&<p><a href={workflow.research.notification.url}target="_blank"rel="noreferrer">Open source</a></p>}<pre>{JSON.stringify(workflow.research?.sources||[],null,2)}</pre></div>{workflow.state==='research_ready'&&<div><button onClick={()=>confirm(true)}disabled={busy}>I reviewed it — continue</button><button onClick={()=>confirm(false)}disabled={busy}>Cancel</button></div>}{workflow.state==='documents_missing'&&<div className="warning"><h3>Checklist</h3><pre>{JSON.stringify(workflow.document_check,null,2)}</pre><button onClick={()=>confirm(true)}disabled={busy}>Re-check</button></div>}{workflow.state==='documents_ready'&&<button onClick={openApp}disabled={busy}>Open target application</button>}{workflow.session_id&&<LiveBrowserCanvas apiBase={API} userId={uid} sessionId={workflow.session_id} onStatus={setStatus}/>} {gate&&<div className="approval"><h3>{gate==='otp'?'OTP':'CAPTCHA'} required — paused safely</h3><p>Formwise will not read, solve, guess, or bypass this value. Enter it yourself.</p><input value={gateValue}onChange={e=>setGateValue(e.target.value)}placeholder={gate==='otp'?'OTP':'CAPTCHA'}/><button onClick={()=>submitGate(gate)}disabled={busy||!gateValue}>Continue</button></div>}{(workflow.state==='browser_ready'||workflow.state==='form_review'||gate)&&workflow.plan&&<div className="plan"><h3>Field-by-field review</h3>{(workflow.plan.fills||[]).map(x=><div className="fill"key={x.index}><div><b>{x.field}</b><p>{x.value}</p><small>{x.source_type||'stored data'} · {x.requires_approval?'Sensitive / approval required':'Verified deterministic mapping'}</small></div>{x.requires_approval&&<button onClick={()=>approveField(x)}disabled={busy||workflow.fieldApprovals?.[x.index]}>{workflow.fieldApprovals?.[x.index]?'Approved':'Approve'}</button>}</div>)}<p>Human gates: {human.length?human.join(', '):'none'}</p><button className="primary"onClick={fill}disabled={busy||!(workflow.plan.fills||[]).length}>Fill approved fields</button></div>}{workflow.state==='final_review'&&<div className="approval"><h3>Final review — nothing is submitted yet</h3><p>Review every field and screenshot. Final submission is a separate explicit approval.</p>{screenshot&&<img className="shot"src={screenshot}alt="Latest workflow screenshot"/>}<button onClick={finalApproval}disabled={busy}>I reviewed the form — prepare final approval</button>{approval&&<button className="danger"onClick={finalSubmit}disabled={busy}>FINAL APPROVAL — SUBMIT</button>}</div>}{workflow.state==='submitted'&&<div className="success"><h3>Submitted</h3>{screenshot&&<img className="shot"src={screenshot}alt="Submission result"/>}</div>}</section>}</div></main><footer>No invented data · no CAPTCHA bypass · OTP/CAPTCHA are user supplied · no payment automation · no legal-declaration automation · final submission requires explicit approval.</footer></div>}
-createRoot(document.getElementById('root')).render(<App/>);
+import React, { useEffect, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import './style.css';
+import StitchShell from './stitch/StitchShell.jsx';
+import CoreWorkspaceScreen from './stitch/CoreWorkspaceScreen.jsx';
+import DocumentVaultScreen from './stitch/DocumentVaultScreen.jsx';
+import MasterKnowledgeScreen from './stitch/MasterKnowledgeScreen.jsx';
+import BillingLogsScreen from './stitch/BillingLogsScreen.jsx';
+import HumanGatewayScreen from './stitch/HumanGatewayScreen.jsx';
+import HumanGatewayModal from './stitch/HumanGatewayModal.jsx';
+
+const API = localStorage.getItem('formwise_api') || 'http://localhost:8000';
+const uidKey = 'formwise_user';
+const getUid = () => { let u = localStorage.getItem(uidKey); if (!u) { u = `demo-${crypto.randomUUID()}`; localStorage.setItem(uidKey, u); } return u; };
+const uid = getUid();
+const MAX_UPLOAD = 10 * 1024 * 1024;
+const ALLOWED = ['application/pdf','image/jpeg','image/png','image/webp'];
+
+async function api(path, opts = {}) {
+  const headers = { 'X-User-ID': uid, ...(opts.headers || {}) };
+  if (opts.body && !(opts.body instanceof FormData) && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+  const response = await fetch(API + path, { ...opts, headers });
+  let data = {}; try { data = await response.json(); } catch {}
+  if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
+  return data;
+}
+
+function App() {
+  const [view, setView] = useState('core');
+  const [profile, setProfile] = useState({ full_name:'', date_of_birth:'', gender:'', email:'', phone:'' });
+  const [docs, setDocs] = useState([]);
+  const [education, setEducation] = useState([]);
+  const [addresses, setAddresses] = useState([]);
+  const [billing, setBilling] = useState(null);
+  const [instruction, setInstruction] = useState('Formwise Demo form bhar do');
+  const [workflow, setWorkflow] = useState(null);
+  const [approval, setApproval] = useState(null);
+  const [screenshot, setScreenshot] = useState('');
+  const [gateValue, setGateValue] = useState('');
+  const [activeGate, setActiveGate] = useState(null);
+  const [resumeRequest, setResumeRequest] = useState(0);
+  const [status, setStatus] = useState('Ready');
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    try {
+      const [p, d, e, a] = await Promise.all([api('/v1/profile'), api('/v1/documents'), api('/v1/education'), api('/v1/addresses')]);
+      setProfile(p); setDocs(d); setEducation(e); setAddresses(a);
+    } catch (e) { setStatus(e.message); }
+  };
+  const loadBilling = async () => { try { setBilling(await api('/v1/billing/summary')); } catch { setBilling(null); } };
+  useEffect(() => { void load(); void loadBilling(); }, []);
+
+  const saveProfile = async () => { setBusy(true); try { setProfile(await api('/v1/profile', { method:'PUT', body:JSON.stringify(profile) })); setStatus('Profile saved.'); } catch(e) { setStatus(e.message); } finally { setBusy(false); } };
+  const upload = async event => {
+    const file = event?.target?.files?.[0]; if (!file) return;
+    if (file.size > MAX_UPLOAD) { setStatus('Upload rejected: maximum size is 10MB.'); return; }
+    if (!ALLOWED.includes(file.type) && !/\.(pdf|jpe?g|png|webp)$/i.test(file.name)) { setStatus('Upload rejected: allowed types are PDF, JPEG, PNG, WEBP.'); return; }
+    setBusy(true); try { const fd = new FormData(); fd.append('file', file); const d = await api('/v1/documents', { method:'POST', body:fd }); setDocs(x => [d, ...x]); setStatus('Document uploaded securely.'); } catch(e) { setStatus(e.message); } finally { setBusy(false); }
+  };
+  const extract = async id => { setBusy(true); try { await api(`/v1/documents/${id}/extract`, { method:'POST' }); await api('/v1/knowledge/reindex', { method:'POST' }); await load(); setStatus('OCR completed and knowledge index refreshed.'); } catch(e) { setStatus(e.message); } finally { setBusy(false); } };
+  const start = async () => { setBusy(true); try { const d = await api('/v1/workflows', { method:'POST', body:JSON.stringify({ instruction }) }); setWorkflow(d); setApproval(null); setScreenshot(''); setStatus('Research ready. Review before continuing.'); } catch(e) { setStatus(e.message); } finally { setBusy(false); } };
+  const confirm = async confirmed => { if (!workflow) return; setBusy(true); try { const d = await api(`/v1/workflows/${workflow.workflow_id}/confirm`, { method:'POST', body:JSON.stringify({ confirmed }) }); setWorkflow(d); setStatus(d.state === 'documents_missing' ? 'Complete the checklist first.' : 'Documents ready.'); } catch(e) { setStatus(e.message); } finally { setBusy(false); } };
+  const openApp = async () => { if (!workflow) return; setBusy(true); try { const d = await api(`/v1/workflows/${workflow.workflow_id}/open`, { method:'POST' }); const p = await api(`/v1/workflows/${d.workflow_id}/plan`, { method:'POST' }); setWorkflow(p); setStatus('Target inspected. Review fields and human gates.'); } catch(e) { setStatus(e.message); } finally { setBusy(false); } };
+  const approveField = async item => { if (!workflow) return; setBusy(true); try { const a = await api('/v1/e2e/approvals', { method:'POST', body:JSON.stringify({ session_id:workflow.session_id, item, ttl_seconds:600 }) }); const payload = { index:item.index, field:item.field, value:item.value, session_id:workflow.session_id }; await api(`/v1/approvals/${a.approval_id}/approve`, { method:'POST', body:JSON.stringify({ action:'fill_sensitive', resource_id:workflow.session_id, payload }) }); setWorkflow(p => ({ ...p, fieldApprovals:{ ...(p.fieldApprovals || {}), [item.index]:a.approval_id } })); setStatus(`Approved ${item.field}.`); } catch(e) { setStatus(e.message); } finally { setBusy(false); } };
+  const refreshShot = async currentWorkflow => { try { const response = await fetch(`${API}/v1/workflows/${currentWorkflow.workflow_id}/screenshot`, { headers:{'X-User-ID':uid}, cache:'no-store' }); if (response.ok) { if (screenshot) URL.revokeObjectURL(screenshot); setScreenshot(URL.createObjectURL(await response.blob())); } } catch {} };
+  const fill = async () => { if (!workflow) return; setBusy(true); try { const fills = (workflow.plan?.fills || []).filter(x => !x.requires_approval || workflow.fieldApprovals?.[x.index]).map(x => ({ ...x, approval_id:workflow.fieldApprovals?.[x.index] })); const d = await api(`/v1/workflows/${workflow.workflow_id}/fill`, { method:'POST', body:JSON.stringify({ fills }) }); setWorkflow(d); await refreshShot(d); setStatus(d.state === 'final_review' ? 'All automated fields filled. Final review required.' : 'Approved fields filled.'); } catch(e) { setStatus(e.message); } finally { setBusy(false); } };
+  const finalApproval = async () => { if (!workflow) return; setBusy(true); try { const a = await api(`/v1/workflows/${workflow.workflow_id}/final-approval`, { method:'POST' }); setApproval(a); setStatus('Final approval prepared. Review the live form carefully.'); } catch(e) { setStatus(e.message); } finally { setBusy(false); } };
+  const finalSubmit = async () => { if (!workflow || !approval?.approval_id) return; setBusy(true); try { const d = await api(`/v1/workflows/${workflow.workflow_id}/submit`, { method:'POST', body:JSON.stringify({ approval_id:approval.approval_id }) }); setWorkflow(d); await refreshShot(d); setStatus('Submitted only after explicit final approval.'); } catch(e) { setStatus(e.message); } finally { setBusy(false); } };
+  const onHumanGate = gate => { setActiveGate(gate); setView('core'); };
+  const onLiveControl = state => { if (state.control === 'locked' && state.mode === 'ai' && !state.paused) setActiveGate(null); };
+  const resumeHuman = () => { setResumeRequest(x => x + 1); setGateValue(''); };
+
+  const renderView = () => {
+    if (view === 'vault') return <DocumentVaultScreen docs={docs} busy={busy} onUpload={upload} onExtract={extract} />;
+    if (view === 'knowledge') return <MasterKnowledgeScreen profile={profile} education={education} addresses={addresses} />;
+    if (view === 'billing') return <BillingLogsScreen billing={billing} busy={busy} onRefresh={loadBilling} />;
+    if (view === 'human') return <HumanGatewayScreen gate={activeGate} onClose={() => setView('core')} />;
+    return <CoreWorkspaceScreen apiBase={API} userId={uid} workflow={workflow} instruction={instruction} setInstruction={setInstruction} busy={busy} status={status} docs={docs} onStart={start} onConfirm={confirm} onOpen={openApp} onUpload={upload} onExtract={extract} onApprove={approveField} onFill={fill} onFinalApproval={finalApproval} onFinalSubmit={finalSubmit} approval={approval} screenshot={screenshot} onHumanGate={onHumanGate} onLiveControl={onLiveControl} resumeRequest={resumeRequest} />;
+  };
+
+  return <StitchShell view={view} onNavigate={setView} status={status}>
+    {renderView()}
+    {activeGate && <HumanGatewayModal gate={activeGate} gateValue={gateValue} setGateValue={setGateValue} onResume={resumeHuman} onCancel={() => setView('human')} busy={busy} />}
+  </StitchShell>;
+}
+
+createRoot(document.getElementById('root')).render(<App />);
