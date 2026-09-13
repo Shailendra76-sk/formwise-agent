@@ -1,6 +1,6 @@
 -- Formwise Phase 1-B: Multi-cloud object storage registry.
--- Extends the Phase 1-A node registry to the five S3-compatible providers
--- used by the hybrid storage adapter.
+-- The registry is intentionally configuration-neutral: administrators create
+-- and activate real nodes only after credentials are provisioned.
 
 alter table public.multi_cloud_storage_nodes
   rename column node_id to id;
@@ -48,14 +48,3 @@ create index if not exists ix_multi_cloud_storage_nodes_status_priority
 
 comment on column public.multi_cloud_storage_nodes.credentials is
   'Provider configuration. Store secrets encrypted at application layer; never log this JSONB value.';
-
--- Seed the deterministic priority map without inventing credentials.
-insert into public.multi_cloud_storage_nodes
-  (id, provider_name, priority, status, credentials)
-values
-  (gen_random_uuid(), 'oracle_cloud', 1, 'DOWN', '{}'::jsonb),
-  (gen_random_uuid(), 'ibm_cos', 2, 'DOWN', '{}'::jsonb),
-  (gen_random_uuid(), 'cloudflare_r2', 3, 'DOWN', '{}'::jsonb),
-  (gen_random_uuid(), 'backblaze_b2', 4, 'DOWN', '{}'::jsonb),
-  (gen_random_uuid(), 'supabase_storage', 5, 'DOWN', '{}'::jsonb)
-on conflict do nothing;
