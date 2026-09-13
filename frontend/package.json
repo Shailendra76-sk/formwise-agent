@@ -10,7 +10,9 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
     "@vitejs/plugin-react": "latest",
+    "tailwindcss": "^4.1.0",
     "vite": "latest",
     "typescript": "latest",
     "react": "latest",
