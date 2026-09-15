@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.admin_routes import router as admin_router
 from app.agent_routes import router as agent_router
 from app.approval_routes import router as approval_router
 from app.browser_agent import close_all_sessions
@@ -56,6 +57,7 @@ app.include_router(orchestrator_router)
 app.include_router(orchestrator_screenshot_router)
 app.include_router(universal_research_router)
 app.include_router(payment_router)
+app.include_router(admin_router)
 
 
 @app.get("/health", tags=["system"])
