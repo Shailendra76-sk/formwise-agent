@@ -40,7 +40,7 @@ jobs:
         run: npm install
 
       - name: Start demo target
-        shell: pwsh
+        shell: powershell
         run: |
           $log = Join-Path $env:RUNNER_TEMP "formwise-demo.log"
           Start-Process `
@@ -70,7 +70,7 @@ jobs:
 
       - name: Demo target log
         if: always()
-        shell: pwsh
+        shell: powershell
         run: |
           $log = Join-Path $env:RUNNER_TEMP "formwise-demo.log"
           if (Test-Path $log) {
