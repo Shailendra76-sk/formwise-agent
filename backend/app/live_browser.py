@@ -15,6 +15,7 @@ from app.browser_agent import BrowserSafetyError, get_session
 from app.config import settings
 from app.database import SessionLocal
 from app.operational_policy import PauseReason, classify_page_text
+from app.verified_data_repository import VerifiedDataRepository
 from app.verified_data_service import VerifiedDataResult, VerifiedDataService, VerifiedDataStatus
 
 
@@ -277,8 +278,9 @@ class LiveBrowserManager:
             return False
         db = SessionLocal()
         try:
-            result = VerifiedDataService(db).get_field(self._controls_user(session_id), field_key)
-            return result.usable
+            gateway = VerifiedDataService(VerifiedDataRepository(db))
+            result = gateway.get_requested_field(user_id=self._controls_user(session_id), requested_field=field_key)
+            return result.status == "verified" and result.value is not None
         finally:
             db.close()
 

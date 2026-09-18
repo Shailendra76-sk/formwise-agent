@@ -117,6 +117,9 @@ def main() -> None:
     start_process(["node", "server.js"], DEMO_DIR, demo_env, "dummy form server :5000")
     wait_for(DEMO_URL)
 
+    print("[SETUP] Applying local Alembic migrations...")
+    subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=BACKEND_DIR, env=backend_env, check=True)
+
     start_process(
         [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000"],
         BACKEND_DIR,
@@ -138,6 +141,23 @@ def main() -> None:
     print("       Email  : demo.user@example.com")
     print("       Mobile : 9999999999")
     api("PUT", "/v1/profile", json=fake_profile)
+    # Demo-only fake values are explicitly marked VERIFIED so the self-healing
+    # path exercises the same provenance gate used in production.
+    import sqlite3
+    with sqlite3.connect(ROOT / ".demo_formwise.db") as conn:
+        demo_rows = [
+            ("demo-prov-name", "full_name", "Demo User"),
+            ("demo-prov-dob", "date_of_birth", "2000-01-02"),
+            ("demo-prov-email", "email", "demo.user@example.com"),
+            ("demo-prov-phone", "phone", "9999999999"),
+        ]
+        conn.executemany(
+            """INSERT OR REPLACE INTO field_provenance
+               (id,user_id,field_name,field_value,source_type,source_id,source_locator,confidence,verification_status,verified_at,created_at,updated_at,revoked_at)
+               VALUES (?,?,?,?,'profile',?,'demo',0.99,'verified',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,NULL)""",
+            [(row_id, USER_ID, field, value, USER_ID) for row_id, field, value in demo_rows],
+        )
+        conn.commit()
     api("POST", "/v1/knowledge/reindex")
 
     print("\n[2/7] Opening the ORIGINAL dummy form briefly...")

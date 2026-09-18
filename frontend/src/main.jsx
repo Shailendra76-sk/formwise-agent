@@ -11,16 +11,51 @@ import HumanGatewayModal from './stitch/HumanGatewayModal.jsx';
 
 const API = localStorage.getItem('formwise_api') || 'http://localhost:8000';
 const uidKey = 'formwise_user';
-const getUid = () => { let u = localStorage.getItem(uidKey); if (!u) { u = `demo-${crypto.randomUUID()}`; localStorage.setItem(uidKey, u); } return u; };
+const isLocalApi = /^(https?:\\/\\/)?(localhost|127\\.0\\.0\\.1)(:\\d+)?$/i.test(new URL(API, window.location.origin).host);
+const getUid = () => {
+  let u = localStorage.getItem(uidKey);
+  if (!u) {
+    u = `demo-${crypto.randomUUID()}`;
+    localStorage.setItem(uidKey, u);
+  }
+  return u;
+};
 const uid = getUid();
 const MAX_UPLOAD = 10 * 1024 * 1024;
 const ALLOWED = ['application/pdf','image/jpeg','image/png','image/webp'];
 
+let accessToken = localStorage.getItem('formwise_access_token') || '';
+let tokenPromise = null;
+
+async function ensureAccessToken() {
+  if (accessToken) return accessToken;
+  if (!isLocalApi) throw new Error('Authentication required. Sign in through the configured identity provider before using Formwise.');
+  if (!tokenPromise) {
+    tokenPromise = fetch(API + '/v1/auth/dev-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: uid, ttl_seconds: 3600 }),
+    }).then(async response => {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.access_token) throw new Error(data.detail || 'Development authentication failed.');
+      accessToken = data.access_token;
+      localStorage.setItem('formwise_access_token', accessToken);
+      return accessToken;
+    }).finally(() => { tokenPromise = null; });
+  }
+  return tokenPromise;
+}
+
 async function api(path, opts = {}) {
-  const headers = { 'X-User-ID': uid, ...(opts.headers || {}) };
+  const token = await ensureAccessToken();
+  const headers = { Authorization: `Bearer ${token}`, ...(opts.headers || {}) };
   if (opts.body && !(opts.body instanceof FormData) && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
   const response = await fetch(API + path, { ...opts, headers });
   let data = {}; try { data = await response.json(); } catch {}
+  if (response.status === 401 && isLocalApi) {
+    localStorage.removeItem('formwise_access_token');
+    accessToken = '';
+  }
   if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
   return data;
 }
@@ -63,10 +98,10 @@ function App() {
   const confirm = async confirmed => { if (!workflow) return; setBusy(true); try { const d = await api(`/v1/workflows/${workflow.workflow_id}/confirm`, { method:'POST', body:JSON.stringify({ confirmed }) }); setWorkflow(d); setStatus(d.state === 'documents_missing' ? 'Complete the checklist first.' : 'Documents ready.'); } catch(e) { setStatus(e.message); } finally { setBusy(false); } };
   const openApp = async () => { if (!workflow) return; setBusy(true); try { const d = await api(`/v1/workflows/${workflow.workflow_id}/open`, { method:'POST' }); const p = await api(`/v1/workflows/${d.workflow_id}/plan`, { method:'POST' }); setWorkflow(p); setStatus('Target inspected. Review fields and human gates.'); } catch(e) { setStatus(e.message); } finally { setBusy(false); } };
   const approveField = async item => { if (!workflow) return; setBusy(true); try { const a = await api('/v1/e2e/approvals', { method:'POST', body:JSON.stringify({ session_id:workflow.session_id, item, ttl_seconds:600 }) }); const payload = { index:item.index, field:item.field, value:item.value, session_id:workflow.session_id }; await api(`/v1/approvals/${a.approval_id}/approve`, { method:'POST', body:JSON.stringify({ action:'fill_sensitive', resource_id:workflow.session_id, payload }) }); setWorkflow(p => ({ ...p, fieldApprovals:{ ...(p.fieldApprovals || {}), [item.index]:a.approval_id } })); setStatus(`Approved ${item.field}.`); } catch(e) { setStatus(e.message); } finally { setBusy(false); } };
-  const refreshShot = async currentWorkflow => { try { const response = await fetch(`${API}/v1/workflows/${currentWorkflow.workflow_id}/screenshot`, { headers:{'X-User-ID':uid}, cache:'no-store' }); if (response.ok) { if (screenshot) URL.revokeObjectURL(screenshot); setScreenshot(URL.createObjectURL(await response.blob())); } } catch {} };
+  const refreshShot = async currentWorkflow => { try { const response = await fetch(`${API}/v1/workflows/${currentWorkflow.workflow_id}/screenshot`, { headers:{Authorization:`Bearer ${accessToken}`}, cache:'no-store' }); if (response.ok) { if (screenshot) URL.revokeObjectURL(screenshot); setScreenshot(URL.createObjectURL(await response.blob())); } } catch {} };
   const fill = async () => { if (!workflow) return; setBusy(true); try { const fills = (workflow.plan?.fills || []).filter(x => !x.requires_approval || workflow.fieldApprovals?.[x.index]).map(x => ({ ...x, approval_id:workflow.fieldApprovals?.[x.index] })); const d = await api(`/v1/workflows/${workflow.workflow_id}/fill`, { method:'POST', body:JSON.stringify({ fills }) }); setWorkflow(d); await refreshShot(d); setStatus(d.state === 'final_review' ? 'All automated fields filled. Final review required.' : 'Approved fields filled.'); } catch(e) { setStatus(e.message); } finally { setBusy(false); } };
-  const finalApproval = async () => { if (!workflow) return; setBusy(true); try { const a = await api(`/v1/workflows/${workflow.workflow_id}/final-approval`, { method:'POST' }); setApproval(a); setStatus('Final approval prepared. Review the live form carefully.'); } catch(e) { setStatus(e.message); } finally { setBusy(false); } };
-  const finalSubmit = async () => { if (!workflow || !approval?.approval_id) return; setBusy(true); try { const d = await api(`/v1/workflows/${workflow.workflow_id}/submit`, { method:'POST', body:JSON.stringify({ approval_id:approval.approval_id }) }); setWorkflow(d); await refreshShot(d); setStatus('Submitted only after explicit final approval.'); } catch(e) { setStatus(e.message); } finally { setBusy(false); } };
+  const finalApproval = () => { if (!workflow || workflow.state !== 'final_review') return; setApproval({ manual_action_required:true, message:"Review the completed form carefully and click the website's final Submit/Confirm button yourself. Formwise never clicks the final submission control." }); setStatus('Final review ready. Manual website submission is required.'); };
+  const finalSubmit = () => { setStatus('Manual action required: click the final Submit/Confirm button on the live website yourself. Formwise will not click it.'); };
   const onHumanGate = gate => { setActiveGate(gate); setView('core'); };
   const onLiveControl = state => { if (state.control === 'locked' && state.mode === 'ai' && !state.paused) setActiveGate(null); };
   const resumeHuman = () => { setResumeRequest(x => x + 1); setGateValue(''); };
