@@ -64,7 +64,7 @@ async function api(path, opts = {}) {
 }
 
 function App() {
-  const [view, setView] = useState('core');
+  const [view, setView] = useState(isAdminSurface ? 'admin' : 'core');
   const [profile, setProfile] = useState({ full_name:'', date_of_birth:'', gender:'', email:'', phone:'' });
   const [docs, setDocs] = useState([]);
   const [education, setEducation] = useState([]);
