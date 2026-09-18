@@ -36,6 +36,8 @@ FIELD_ALIASES={
 "signature":("signature","sign","signature image","हस्ताक्षर"),
 }
 SENSITIVE_FIELDS={"aadhaar_number","pan_number","date_of_birth","address","phone","email","gender","father_name","mother_name","nationality","category","marital_status","registration_number","roll_number"}
+SELF_HEAL_EXECUTION_THRESHOLD=.86
+
 @dataclass(frozen=True)
 class FieldCandidate:
     field:str; score:float; reason:str; self_healed:bool=False
@@ -87,7 +89,7 @@ def resolve_field_mapping(field:str,controls:list[dict],preferred_index:int|None
     ranked.sort(reverse=True)
     if not ranked:return None
     winner=ranked[0];runner=ranked[1][0] if len(ranked)>1 else 0.0
-    if winner[0]>=.86 and winner[0]-runner>=.10:return FieldCandidate(field,winner[0],winner[2],winner[3])
+    if winner[0]>=SELF_HEAL_EXECUTION_THRESHOLD and winner[0]-runner>=.10:return FieldCandidate(field,winner[0],winner[2],winner[3])
     return None
 
 def map_controls(controls:list[dict])->list[dict]:
@@ -98,9 +100,16 @@ def map_controls(controls:list[dict])->list[dict]:
             candidates=[]
             for field in FIELD_ALIASES:
                 score,source=_semantic_score(field,c)
-                if score>=.86:candidates.append((score,field,source))
+                if score>=SELF_HEAL_EXECUTION_THRESHOLD:candidates.append((score,field,source))
             candidates.sort(reverse=True)
             if candidates and (len(candidates)==1 or candidates[0][0]-candidates[1][0]>=.10):
                 score,field,source=candidates[0];x=FieldCandidate(field,score,f"self-healed semantic match: {source}",True)
-        out.append({"index":i,"field":x.field if x else None,"confidence":x.score if x else 0.0,"reason":x.reason if x else "no deterministic or semantic match","requires_approval":bool(x and x.field in SENSITIVE_FIELDS),"self_healed":bool(x and x.self_healed)})
+        out.append({"index":i,"field":x.field if x else None,"confidence":x.score if x else 0.0,"reason":x.reason if x else "no deterministic or semantic match","requires_approval":bool(x and x.field in SENSITIVE_FIELDS),"self_healed":bool(x and x.self_healed),"requires_verified_gateway":bool(x and x.self_healed and x.score>=SELF_HEAL_EXECUTION_THRESHOLD)})
     return out
+
+def is_high_confidence_self_heal(candidate:dict|FieldCandidate|None)->bool:
+    """Return whether a recovered field must fetch its value through the gateway."""
+    if candidate is None:return False
+    if isinstance(candidate,FieldCandidate):
+        return candidate.self_healed and candidate.score>=SELF_HEAL_EXECUTION_THRESHOLD
+    return bool(candidate.get("self_healed")) and float(candidate.get("confidence",0.0))>=SELF_HEAL_EXECUTION_THRESHOLD
