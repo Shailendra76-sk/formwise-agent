@@ -7,10 +7,12 @@ from app.agent_reasoning import _extract_value
 from app.approval_engine import SENSITIVE_FIELDS, ApprovalError, consume, create_approval
 from app.browser_agent import BrowserSafetyError, get_session, inspect_session, upload_control
 from app.db_models import DocumentRecord
-from app.form_mapping import map_controls, resolve_field_mapping
+from app.form_mapping import is_high_confidence_self_heal, map_controls, resolve_field_mapping
 from app.knowledge_base import load_user_index
 from app.storage import PrivateStorage
 from app.user_data import get_user_data
+from app.verified_data_repository import VerifiedDataRepository
+from app.verified_data_service import VerifiedDataService
 
 BLOCKED_PAGE_TERMS={"payment","pay now","final submission","legal declaration","i agree","anti-bot","anti bot","bot verification"}
 
@@ -50,26 +52,47 @@ def _document_proposal(field:str,db:Session,user_id:str)->dict[str,Any]|None:
         r=matches[0];return {"field":field,"value":r.original_filename,"source_type":"document","source_id":r.id,"document_id":r.id,"confidence":1.0}
     return None
 
+def _gateway(db:Session|None)->VerifiedDataService|None:
+    return VerifiedDataService(VerifiedDataRepository(db)) if db is not None else None
+
+def _verified_gateway_value(service:VerifiedDataService,user_id:str,field:str)->dict[str,Any]:
+    result=service.get_requested_field(user_id=user_id,requested_field=field)
+    if result.status == "conflict":
+        return {"status":"paused","reason":result.reason or "verified data conflict; human confirmation required"}
+    if result.status != "verified" or result.value is None:
+        return {"status":"paused","reason":result.reason or "verified data not found; no value may be filled"}
+    return {"status":"verified","field":result.field,"value":result.value,"confidence":result.confidence,"source_type":result.source_type,"source_id":result.source_id,"provenance_id":result.provenance_id}
+
 async def plan_form(user_id:str,session_id:str,instruction:str,storage:PrivateStorage,db:Session|None=None)->dict[str,Any]:
-    session=get_session(session_id,user_id);inspection=await inspect_session(session);signals=_page_signals(inspection);mappings=map_controls(inspection["controls"]);proposals=[];knowledge_chunks=None
+    session=get_session(session_id,user_id);inspection=await inspect_session(session);signals=_page_signals(inspection);mappings=map_controls(inspection["controls"]);proposals=[];knowledge_chunks=None;gateway=_gateway(db)
     for mapping in mappings:
         field=mapping.get("field")
         if not field or mapping.get("confidence",0)<0.70 or inspection["controls"][mapping["index"]].get("disabled"):continue
         value=None
-        if db:value=get_user_data(db,storage,user_id,field)
+        # A high-confidence self-healed target is never populated from the
+        # knowledge index. It must make a single-field request to the verified
+        # gateway, and any conflict/missing value pauses the plan.
+        if is_high_confidence_self_heal(mapping):
+            if gateway is None:
+                return {"status":"paused","reason":"verified data gateway requires database context","session_id":session_id,"url":inspection["url"],"title":inspection["title"],"mappings":mappings,"proposals":[],"fills":[],"blocked_signals":signals["blocked"],"human_required":signals["human"],"submission_allowed":False}
+            verified=_verified_gateway_value(gateway,user_id,field)
+            if verified["status"] != "verified":
+                return {"status":"paused","reason":verified["reason"],"field":field,"session_id":session_id,"url":inspection["url"],"title":inspection["title"],"mappings":mappings,"proposals":[],"fills":[],"blocked_signals":signals["blocked"],"human_required":signals["human"],"submission_allowed":False}
+            value=verified
+        elif db:value=get_user_data(db,storage,user_id,field)
         if value is None and db and field in {"photo","signature"}:value=_document_proposal(field,db,user_id)
         if value is None:
             if knowledge_chunks is None:knowledge_chunks=load_user_index(storage,user_id).get("chunks",[])
             value=_resolve_value(field,knowledge_chunks)
-        if value:proposals.append({**value,"index":mapping["index"],"requires_approval":field in SENSITIVE_FIELDS,"reason":mapping.get("reason"),"self_healed":bool(mapping.get("self_healed"))})
+        if value:proposals.append({**value,"index":mapping["index"],"requires_approval":field in SENSITIVE_FIELDS,"reason":mapping.get("reason"),"self_healed":bool(mapping.get("self_healed")),"verified_gateway":is_high_confidence_self_heal(mapping)})
     fills=[dict(item) for item in proposals]
     status="blocked" if signals["blocked"] else ("ready" if proposals else "needs_clarification")
-    return {"status":status,"instruction":instruction,"session_id":session_id,"url":inspection["url"],"title":inspection["title"],"mappings":mappings,"proposals":proposals,"fills":fills,"blocked_signals":signals["blocked"],"human_required":signals["human"],"submission_allowed":False,"warnings":["User data is fetched on-demand only for a mapped field.","Only stored values with provenance are proposed.","No value is invented.","Sensitive fields require explicit approval.","CAPTCHA and OTP are human gates; they are never solved by Formwise.","Payment, anti-bot bypass, legal declarations and final submission are never automated.","Semantic self-healing may remap a changed DOM target only when confidence is high and ambiguity is low."]}
+    return {"status":status,"instruction":instruction,"session_id":session_id,"url":inspection["url"],"title":inspection["title"],"mappings":mappings,"proposals":proposals,"fills":fills,"blocked_signals":signals["blocked"],"human_required":signals["human"],"submission_allowed":False,"warnings":["User data is fetched on-demand only for a mapped field.","High-confidence self-healed fields are resolved only through VerifiedDataService.","CONFLICT or NOT_FOUND from the verified gateway pauses the workflow; no fallback value is used.","Only stored values with provenance are proposed.","No value is invented.","Sensitive fields require explicit approval.","CAPTCHA and OTP are human gates; they are never solved by Formwise.","Payment, anti-bot bypass, legal declarations and final submission are never automated.","Semantic self-healing may remap a changed DOM target only when confidence is high and ambiguity is low."]}
 
 async def execute_form(user_id:str,session_id:str,fills:list[dict[str,Any]],storage:PrivateStorage,db:Session|None=None)->dict[str,Any]:
     session=get_session(session_id,user_id);inspection=await inspect_session(session);blocked=_blocked_page(inspection)
     if blocked:return {"status":"blocked","filled":[],"blocked":[{"reason":"safety signal detected","signals":blocked}],"submission_allowed":False}
-    mappings=map_controls(inspection["controls"]);results=[];blocked_items=[]
+    mappings=map_controls(inspection["controls"]);results=[];blocked_items=[];gateway=_gateway(db)
     for item in fills[:100]:
         try:requested_idx=int(item["index"]);field=str(item["field"]);value=str(item["value"])
         except (KeyError,TypeError,ValueError):blocked_items.append({"reason":"invalid fill request"});continue
@@ -86,6 +109,21 @@ async def execute_form(user_id:str,session_id:str,fills:list[dict[str,Any]],stor
             idx=int(match.group(1))
             if healed.score<.86:
                 blocked_items.append({"index":requested_idx,"field":field,"reason":"self-healing confidence below execution threshold"});continue
+        # Re-fetch a high-confidence self-healed value immediately before any
+        # mutation. The value in the client-supplied fill is never trusted.
+        mapping=mappings[idx] if 0<=idx<len(mappings) else {}
+        if is_high_confidence_self_heal(mapping):
+            if gateway is None:
+                blocked_items.append({"index":idx,"field":field,"reason":"verified data gateway requires database context"});continue
+            verified=_verified_gateway_value(gateway,user_id,field)
+            if verified["status"] != "verified":
+                blocked_items.append({"index":idx,"field":field,"reason":verified["reason"],"status":"paused"});continue
+            if verified["value"] != value:
+                blocked_items.append({"index":idx,"field":field,"reason":"verified value changed since planning; re-plan and re-approve before filling","status":"paused"});continue
+            value=verified["value"]
+            item_source={"source_type":verified.get("source_type"),"source_id":verified.get("source_id"),"provenance_id":verified.get("provenance_id"),"confidence":verified.get("confidence")}
+        else:
+            item_source={"source_type":item.get("source_type"),"source_id":item.get("source_id")}
         if field in SENSITIVE_FIELDS:
             approval_id=item.get("approval_id")
             if not approval_id:blocked_items.append({"index":idx,"field":field,"reason":"explicit approval is required"});continue
@@ -104,7 +142,7 @@ async def execute_form(user_id:str,session_id:str,fills:list[dict[str,Any]],stor
             else:
                 from app.browser_agent import fill_control
                 result=await fill_control(session,idx,value)
-            results.append({**result,"field":field,"self_healed":bool(stale),"provenance":{"source_type":item.get("source_type"),"source_id":item.get("source_id")}})
+            results.append({**result,"field":field,"self_healed":bool(stale or mapping.get("self_healed")),"provenance":item_source})
         except (BrowserSafetyError,ValueError) as exc:blocked_items.append({"index":idx,"field":field,"reason":str(exc)})
     signals=_page_signals(await inspect_session(session))
     return {"status":"ok" if results else "no_change","filled":results,"blocked":blocked_items,"human_required":signals["human"],"submission_allowed":False,"review_required":True,"warning":"Review the page after filling. Formwise never clicks final submit and never bypasses CAPTCHA, OTP, payment or legal declarations."}
