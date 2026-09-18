@@ -5,10 +5,11 @@ import os
 from typing import Any
 from urllib.parse import urlparse
 
+from app.database import SessionLocal
 from app.form_mapping import FIELD_ALIASES
 from app.operational_policy import classify_page_text
-from app.verified_data_service import VerifiedDataResult, VerifiedDataService
-from app.database import SessionLocal
+from app.verified_data_repository import VerifiedDataRepository
+from app.verified_data_service import DataGatewayResult, VerifiedDataResult, VerifiedDataService
 
 
 class BrowserUseUnavailable(RuntimeError):
@@ -24,10 +25,8 @@ def normalize_agent_field_request(requested_field: str) -> str:
     if not isinstance(requested_field, str):
         raise BrowserUseSafetyError("requested field must be a string")
     field = requested_field.strip().lower()
-    if field not in FIELD_ALIASES:
+    if field not in FIELD_ALIASES or field in {"profile", "all", "*"}:
         raise BrowserUseSafetyError("browser agent requested an unsupported field")
-    if field in {"profile", "all", "*"}:
-        raise BrowserUseSafetyError("browser agent cannot request a profile or wildcard")
     return field
 
 
@@ -37,18 +36,59 @@ async def request_verified_field(
     *,
     session_id: str | None = None,
 ) -> VerifiedDataResult:
-    """Read exactly one approved field through the verified-data boundary."""
+    """Read exactly one approved field from provenance-backed verified data."""
     field_key = normalize_agent_field_request(field_key)
     db = SessionLocal()
     try:
-        result = VerifiedDataService(db).get_field(user_id, field_key)
+        gateway = VerifiedDataService(VerifiedDataRepository(db))
+        result: DataGatewayResult = gateway.get_requested_field(
+            user_id=user_id,
+            requested_field=field_key,
+        )
     finally:
         db.close()
 
-    if not result.usable and session_id:
+    if result.status == "verified":
+        legacy_result = VerifiedDataResult(
+            status="VERIFIED",
+            field_key=field_key,
+            value=result.value,
+            source=result.source_type,
+            message=None,
+        )
+    elif result.status == "conflict":
+        legacy_result = VerifiedDataResult(
+            status="CONFLICT",
+            field_key=field_key,
+            value=None,
+            source=None,
+            message=result.reason or "verified data conflict; human confirmation required",
+        )
+    elif result.status == "invalid_field":
+        legacy_result = VerifiedDataResult(
+            status="INVALID_FIELD",
+            field_key=field_key,
+            value=None,
+            source=None,
+            message=result.reason or "field is not approved",
+        )
+    else:
+        legacy_result = VerifiedDataResult(
+            status="NOT_FOUND",
+            field_key=field_key,
+            value=None,
+            source=None,
+            message=result.reason or "no verified value available",
+        )
+
+    if not legacy_result.usable and session_id:
         from app.live_browser import live_manager
-        await live_manager.require_human_for_verified_data(session_id, field_key, result)
-    return result
+        await live_manager.require_human_for_verified_data(
+            session_id,
+            field_key,
+            legacy_result,
+        )
+    return legacy_result
 
 
 def _validate_allowed_url(allowed_url: str) -> str:
@@ -76,16 +116,23 @@ async def run_browser_use_task(
         raise BrowserUseSafetyError("only semantic inspection mode is enabled")
     if not allowed_url:
         raise ValueError("allowed_url is required for Browser Use tasks")
+
+    canonical_field = None
     if requested_field:
         if not user_id:
             raise ValueError("user_id is required when requested_field is supplied")
-        verified = await request_verified_field(user_id, requested_field, session_id=session_id)
+        canonical_field = normalize_agent_field_request(requested_field)
+        verified = await request_verified_field(
+            user_id,
+            canonical_field,
+            session_id=session_id,
+        )
         if not verified.usable:
             return {
                 "status": "paused",
                 "reason": verified.status.lower(),
                 "message": verified.message,
-                "requested_field": requested_field,
+                "requested_field": canonical_field,
             }
 
     safe_url = _validate_allowed_url(allowed_url)
@@ -122,8 +169,8 @@ async def run_browser_use_task(
         "result": result,
         "model": model,
     }
-    if requested_field:
-        response["requested_field"] = normalize_agent_field_request(requested_field)
+    if canonical_field:
+        response["requested_field"] = canonical_field
         response["data_gateway"] = "VerifiedDataService"
     if not decision.allowed:
         response["reason"] = decision.reason.value if decision.reason else None
