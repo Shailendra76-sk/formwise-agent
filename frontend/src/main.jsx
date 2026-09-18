@@ -8,6 +8,8 @@ import MasterKnowledgeScreen from './stitch/MasterKnowledgeScreen.jsx';
 import BillingLogsScreen from './stitch/BillingLogsScreen.jsx';
 import HumanGatewayScreen from './stitch/HumanGatewayScreen.jsx';
 import HumanGatewayModal from './stitch/HumanGatewayModal.jsx';
+import './admin/tailwind.css';
+import AdminDashboard from './admin/AdminDashboard.tsx';
 
 const API = localStorage.getItem('formwise_api') || 'http://localhost:8000';
 const uidKey = 'formwise_user';
@@ -23,6 +25,7 @@ const getUid = () => {
 const uid = getUid();
 const MAX_UPLOAD = 10 * 1024 * 1024;
 const ALLOWED = ['application/pdf','image/jpeg','image/png','image/webp'];
+const isAdminSurface = new URLSearchParams(window.location.search).get('admin') === '1' || localStorage.getItem('formwise_role') === 'system_admin';
 
 let accessToken = localStorage.getItem('formwise_access_token') || '';
 let tokenPromise = null;
@@ -105,6 +108,8 @@ function App() {
   const onHumanGate = gate => { setActiveGate(gate); setView('core'); };
   const onLiveControl = state => { if (state.control === 'locked' && state.mode === 'ai' && !state.paused) setActiveGate(null); };
   const resumeHuman = () => { setResumeRequest(x => x + 1); setGateValue(''); };
+
+  if (view === 'admin') return <AdminDashboard />;
 
   const renderView = () => {
     if (view === 'vault') return <DocumentVaultScreen docs={docs} busy={busy} onUpload={upload} onExtract={extract} />;
