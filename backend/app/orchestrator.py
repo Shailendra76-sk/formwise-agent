@@ -24,13 +24,38 @@ def _doc_kind(filename:str)->str:
     if any(x in name for x in ("photo","passport")):return "photo"
     if any(x in name for x in ("signature","sign")):return "signature"
     return "other"
-def _document_checklist(db:Session,user_id:str,storage:PrivateStorage)->dict[str,Any]:
-    rows=db.scalars(select(DocumentRecord).where(DocumentRecord.user_id==user_id,DocumentRecord.status!="deleted")).all();kinds=set();extracted=[]
+def _document_checklist(db:Session,user_id:str,storage:PrivateStorage,research:dict[str,Any]|None=None)->dict[str,Any]:
+    rows=db.scalars(select(DocumentRecord).where(DocumentRecord.user_id==user_id,DocumentRecord.status!="deleted")).all()
+    kinds=set(); extracted=[]
     for row in rows:
-        kind=_doc_kind(row.original_filename);kinds.add(kind)
-        try:data=storage.read_json(user_id,f"{row.storage_key}.extraction.json");fields=data.get("fields",[]);extracted.append({"document_id":row.id,"filename":row.original_filename,"status":data.get("status"),"fields":[f.get("name") for f in fields if f.get("name")],"engine":data.get("engine")})
-        except FileNotFoundError:extracted.append({"document_id":row.id,"filename":row.original_filename,"status":"not_extracted","fields":[]})
-    profile=db.get(ProfileRecord,user_id);required=[{"key":"identity","label":"Identity/address proof","required":True},{"key":"education_12th","label":"Class 12 / equivalent qualification proof","required":True},{"key":"photo","label":"Recent photograph","required":True},{"key":"signature","label":"Signature image","required":True}];missing=[x for x in required if x["key"] not in kinds];not_extracted=[x for x in extracted if x["status"]=="not_extracted"];profile_missing=[field for field in ("full_name","date_of_birth","gender","email","phone") if not getattr(profile,field,None)];return {"documents":[{"key":x["key"],"label":x["label"],"present":x["key"] not in {m["key"] for m in missing}} for x in required],"extracted_documents":extracted,"missing_documents":missing,"documents_needing_ocr":not_extracted,"missing_profile_fields":profile_missing,"ready":not missing and not not_extracted and not profile_missing}
+        kind=_doc_kind(row.original_filename); kinds.add(kind)
+        try:
+            data=storage.read_json(user_id,f"{row.storage_key}.extraction.json")
+            fields=data.get("fields",[])
+            extracted.append({"document_id":row.id,"filename":row.original_filename,"status":data.get("status"),"fields":[f.get("name") for f in fields if f.get("name")],"engine":data.get("engine")})
+        except FileNotFoundError:
+            extracted.append({"document_id":row.id,"filename":row.original_filename,"status":"not_extracted","fields":[]})
+    required_source=(research or {}).get("required_documents") or (research or {}).get("requiredDocuments") or []
+    normalized=[];seen_keys=set()
+    for item in required_source if isinstance(required_source,list) else []:
+        if isinstance(item,str):
+            key=_doc_kind(item);label=item.strip()
+        elif isinstance(item,dict):
+            key=str(item.get("key") or item.get("type") or item.get("name") or "other").strip().lower()
+            label=str(item.get("label") or item.get("name") or key)
+        else:
+            continue
+        if not key or key in seen_keys:
+            continue
+        normalized.append({"key":key,"label":label,"required":True});seen_keys.add(key)
+    missing=[x for x in normalized if x["key"] not in kinds]
+    not_extracted=[x for x in extracted if x["status"]=="not_extracted"]
+    profile=db.get(ProfileRecord,user_id)
+    profile_missing=[field for field in ("full_name","date_of_birth","gender","email","phone") if not getattr(profile,field,None)]
+    advisory=[] if normalized else ["No research-declared document requirements were available; Formwise will inspect live upload controls instead of imposing a fixed document checklist."]
+    return {"documents":[{"key":x["key"],"label":x["label"],"present":x["key"] not in {m["key"] for m in missing}} for x in normalized],"extracted_documents":extracted,"missing_documents":missing,"documents_needing_ocr":not_extracted,"missing_profile_fields":profile_missing,"advisories":advisory,"ready":not missing and not not_extracted and not profile_missing}
+
+
 def _otp_control(inspection:dict[str,Any])->int|None:
     for c in inspection.get("controls",[]):
         hay=" ".join(str(c.get(k) or "") for k in ("name","id","placeholder","ariaLabel","autocomplete","text")).lower()
