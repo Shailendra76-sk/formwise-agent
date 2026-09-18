@@ -21,6 +21,7 @@ from app.database import Base, engine
 from app import db_models  # noqa: F401
 from app.payment_routes import router as payment_router
 from app.universal_research_routes import router as universal_research_router
+from app.auth_routes import router as auth_router
 
 
 @asynccontextmanager
@@ -56,6 +57,7 @@ app.include_router(e2e_router)
 app.include_router(orchestrator_router)
 app.include_router(orchestrator_screenshot_router)
 app.include_router(universal_research_router)
+app.include_router(auth_router)
 app.include_router(payment_router)
 app.include_router(admin_router)
 
