@@ -5,6 +5,7 @@ import os
 from typing import Any
 from urllib.parse import urlparse
 
+from app.form_mapping import FIELD_ALIASES
 from app.operational_policy import classify_page_text
 from app.verified_data_service import VerifiedDataResult, VerifiedDataService
 from app.database import SessionLocal
@@ -18,18 +19,26 @@ class BrowserUseSafetyError(RuntimeError):
     pass
 
 
+def normalize_agent_field_request(requested_field: str) -> str:
+    """Validate a single canonical field request; no profile/wildcard access."""
+    if not isinstance(requested_field, str):
+        raise BrowserUseSafetyError("requested field must be a string")
+    field = requested_field.strip().lower()
+    if field not in FIELD_ALIASES:
+        raise BrowserUseSafetyError("browser agent requested an unsupported field")
+    if field in {"profile", "all", "*"}:
+        raise BrowserUseSafetyError("browser agent cannot request a profile or wildcard")
+    return field
+
+
 async def request_verified_field(
     user_id: str,
     field_key: str,
     *,
     session_id: str | None = None,
 ) -> VerifiedDataResult:
-    """Read exactly one allow-listed field from the verified DB gateway.
-
-    A non-VERIFIED result fails closed and, for a live session, asks the live
-    browser manager to unlock human control. Values are never sent to the
-    browser frontend by this helper.
-    """
+    """Read exactly one approved field through the verified-data boundary."""
+    field_key = normalize_agent_field_request(field_key)
     db = SessionLocal()
     try:
         result = VerifiedDataService(db).get_field(user_id, field_key)
@@ -38,7 +47,6 @@ async def request_verified_field(
 
     if not result.usable and session_id:
         from app.live_browser import live_manager
-
         await live_manager.require_human_for_verified_data(session_id, field_key, result)
     return result
 
@@ -61,30 +69,22 @@ async def run_browser_use_task(
     session_id: str | None = None,
     requested_field: str | None = None,
 ) -> dict[str, Any]:
-    """Run Browser Use as a semantic observer behind Formwise safety controls.
-
-    When requested_field is present, the adapter obtains only that single
-    approved value through VerifiedDataService before the browser inspection.
-    Browser Use remains inspection-only; deterministic Formwise execution owns
-    field mutation, uploads, approvals, and final submission.
-    """
+    """Semantic Browser Use observer behind Formwise safety controls."""
     if not task or len(task) > 4000:
         raise ValueError("task must be non-empty and <= 4000 characters")
     if mode != "inspect":
         raise BrowserUseSafetyError("only semantic inspection mode is enabled")
     if not allowed_url:
         raise ValueError("allowed_url is required for Browser Use tasks")
-    if requested_field and not user_id:
-        raise ValueError("user_id is required when requested_field is supplied")
-
-    verified_field: VerifiedDataResult | None = None
     if requested_field:
-        verified_field = await request_verified_field(user_id, requested_field, session_id=session_id)
-        if not verified_field.usable:
+        if not user_id:
+            raise ValueError("user_id is required when requested_field is supplied")
+        verified = await request_verified_field(user_id, requested_field, session_id=session_id)
+        if not verified.usable:
             return {
                 "status": "paused",
-                "reason": verified_field.status.lower(),
-                "message": verified_field.message,
+                "reason": verified.status.lower(),
+                "message": verified.message,
                 "requested_field": requested_field,
             }
 
@@ -122,10 +122,9 @@ async def run_browser_use_task(
         "result": result,
         "model": model,
     }
-    if verified_field is not None:
-        response["requested_field"] = verified_field.field_key
-        response["verified_value"] = verified_field.value if verified_field.usable else None
-        response["verified_source"] = verified_field.source
+    if requested_field:
+        response["requested_field"] = normalize_agent_field_request(requested_field)
+        response["data_gateway"] = "VerifiedDataService"
     if not decision.allowed:
         response["reason"] = decision.reason.value if decision.reason else None
         response["message"] = decision.message
