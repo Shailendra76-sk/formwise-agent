@@ -89,10 +89,19 @@ class RazorpayGatewayService:
 
         transaction_id = str(uuid.uuid4())
         try:
-            email_row = self.db.execute(
-                text("SELECT email FROM auth.users WHERE id = :user_id"),
-                {"user_id": normalized_user_id},
-            ).mappings().first()
+            try:
+                email_row = self.db.execute(
+                    text("SELECT email FROM auth_users WHERE user_id = :user_id"),
+                    {"user_id": normalized_user_id},
+                ).mappings().first()
+            except Exception:
+                # Legacy Supabase deployments used auth.users. New production
+                # deployments use the first-party auth_users migration.
+                self.db.rollback()
+                email_row = self.db.execute(
+                    text("SELECT email FROM auth.users WHERE id = :user_id"),
+                    {"user_id": normalized_user_id},
+                ).mappings().first()
             user_email = str(email_row["email"]).strip() if email_row and email_row.get("email") else None
             self.db.execute(
                 text(
@@ -144,6 +153,21 @@ class RazorpayGatewayService:
         except Exception as exc:
             raise RazorpaySignatureError("invalid Razorpay checkout signature") from exc
         return True
+
+    def refund_payment(self, *, payment_id: str, amount_in_paise: int, notes: Mapping[str, str] | None = None) -> str:
+        payment_id = str(payment_id).strip()
+        if not payment_id or int(amount_in_paise) <= 0:
+            raise ValueError("payment_id and positive refund amount are required")
+        credentials = self._load_credentials()
+        client = self.client_factory((credentials.key_id, credentials.key_secret))
+        try:
+            response = client.payment.refund(payment_id, {"amount": int(amount_in_paise), "notes": dict(notes or {})})
+        except Exception as exc:
+            raise RazorpayGatewayError("Razorpay refund request failed") from exc
+        refund_id = str(response.get("id", "")).strip() if isinstance(response, Mapping) else ""
+        if not refund_id:
+            raise RazorpayGatewayError("Razorpay did not return a refund id")
+        return refund_id
 
     def _load_credentials(self) -> RazorpayCredentials:
         dialect = getattr(getattr(self.db, "bind", None), "dialect", None)
