@@ -500,3 +500,375 @@ Never executed in this audit: Docker image build, PostgreSQL migration, Redis wo
 10. Review this PR, then owner—not agent—merges PR #26 to `main` after all MUST items pass.
 
 **Final labels:** core safety workflow `VERIFIED`; external integrations `IMPLEMENTED-UNTESTED`; real portal support `NOT STARTED`; generated provider catalog `IMPLEMENTED-UNTESTED`; production release `NOT READY`.
+
+
+# Evidence Addendum — Requested Gap Closure
+
+## 1. Target-vs-branch replace/merge comparison
+
+**Commands used:**
+
+```bash
+git diff --name-only 181c8ce6d44f1f2b08e14844e8254b936f5ab70d HEAD
+git show 181c8ce6d44f1f2b08e14844e8254b936f5ab70d:<file>
+python3 /home/ubuntu/work/compare_symbols.py
+```
+
+The comparison script parses Python classes/functions, route decorators, `FORMWISE_` names and SQLAlchemy `__tablename__` lines. It reported only one target symbol absent from the current branch: `backend/app/storage_service.py:_is_transient_provider_error`. That helper is not called by the current branch; the branch uses its current exception handling path. No target route, class, DB table or `FORMWISE_` setting was reported missing by the symbol scan.
+
+| File selected for replace/merge | Present in target but missing now | Changed behaviour observed |
+|---|---|---|
+| `backend/app/admin_routes.py` | none | Target admin surface is expanded to live summary, provider, storage, auth, website, worker, branding, marketing and preview-confirm assistant controls; admin authorization is DB-backed. |
+| `backend/app/ai_provider_adapter.py` | none | Adds catalog, capability routing, quota/health/usage ledger, bounded failover and more handlers. |
+| `backend/app/auth.py` | none | Adds stronger JWT/session/provider-aware identity behavior while retaining user ownership checks. |
+| `backend/app/auth_routes.py` | none | Adds signup, refresh, verification, reset, OAuth, provider token, OTP and linking routes. |
+| `backend/app/browser_agent.py` | none | Keeps URL/private-network and non-submit safety behavior; merged settings support more production controls. |
+| `backend/app/config.py` | none | Adds Redis, task, live-browser, AI routing and production storage settings; development defaults remain unsafe for production. |
+| `backend/app/database.py` | none | Adds production-aware database configuration/pooling behavior. |
+| `backend/app/db_models.py` | none | Adds auth, website, durable task, browser event and AI usage models; target models remain present. |
+| `backend/app/main.py` | none | Mounts expanded routers, readiness checks and production middleware; production avoids `create_all` as schema authority. |
+| `backend/app/notification_service.py` | none | Adds Brevo transactional email adapter; delivery remains disabled until configured. |
+| `backend/app/orchestrator.py` | none | Keeps workflow stages and manual final-submit boundary; adds safer research/document readiness and human-gate checks. |
+| `backend/app/payment_routes.py` | none | Adds order, verify, retry and signed webhook lifecycle. Payments are not automatically executed by the browser. |
+| `backend/app/payment_service.py` | none | Adds paid/failed settlement, wallet credits, referral reward, refund request and reconciliation logic. |
+| `backend/app/razorpay_gateway.py` | none | Adds encrypted credential loading, order creation, signature verification and refund wrapper. |
+| `backend/app/routes.py` | none | Preserves profile/address/education/document routes and adds extraction/download/delete integration. |
+| `backend/app/security.py` | none | Production security validation/default checks are stronger. |
+| `backend/app/storage_service.py` | `_is_transient_provider_error` only | Current branch uses multi-node/provider-registry failover and encrypted credentials; target helper was unused by the current implementation. |
+| `frontend/src/LiveBrowserCanvas.tsx` | none | Adds live token/state wiring and policy-oriented UI behavior. |
+| `frontend/src/admin/AdminDashboard.tsx` | none | Replaces synthetic/static operational values with live API-backed sections and provider controls. |
+| `frontend/src/main.jsx` | none | Adds auth/session refresh and broader workspace/API integration. |
+| `frontend/src/stitch/CoreWorkspaceScreen.jsx` | none | Preserves target workspace while connecting expanded workflow state. |
+| `frontend/src/stitch/StitchShell.jsx` | none | Keeps target shell and supports additional operational screens. |
+| `frontend/src/style.css` | none | Styling changes only; no target route or screen symbol was removed. |
+| `backend/requirements.txt` | none | Adds Redis dependency; existing dependency ranges retained. |
+| `README.md` | none | Documents the merged safety/control-plane behavior and remaining staging requirement. |
+| `docs/ARCHITECTURE.md` | none | Describes expanded production architecture. |
+| `docs/ROADMAP.md` | none | Updates roadmap status. |
+| `docs/SECURITY.md` | none | Adds merged security/control-plane notes. |
+| `backend/tests/test_migration_graph.py` | none | Updates expected final head and still checks one-head graph. |
+
+**Interpretation:** “none” means no target-level symbol was detected as absent, not that all behavior is proven equivalent. External integrations still require runtime tests.
+
+## 2. Exact 0014 portal seed rows and migration naming
+
+Migration file: `backend/migrations/versions/0014_registry_production.py`. The exact rows in `OFFICIAL` and the SQL values are:
+
+| Portal name | URL | `enabled` inserted value |
+|---|---|---|
+| Staff Selection Commission | `https://ssc.gov.in` | `false` |
+| Union Public Service Commission | `https://upsc.gov.in` | `false` |
+| National Scholarship Portal | `https://scholarships.gov.in` | `false` |
+| National Testing Agency | `https://exams.nta.ac.in` | `false` |
+
+**Count: 4 portal rows.** The migration inserts `verified=true` and `health_status='unknown'`, but `enabled=false`; this is registry metadata, not authorization to automate.
+
+Naming reconciliation: the actual file and revision are `0004_phase1a_rls_policies.py` and `revision = "0004_phase1a_rls_policies"`. The next file is `0005_phase1b_multi_cloud_storage.py` with `down_revision = "0004_phase1a_rls_policies"`. Any earlier report text calling 0004 “phase1b” was a documentation typo; the code and migration graph say **0004 = phase1a**, **0005 = phase1b**.
+
+## 3. AI provider evidence resolution
+
+Evidence commands:
+
+```bash
+grep -nE 'PROVIDER_CATALOG|handlers =|def _azure_openai|def _bedrock|def _lepton|def _mistral|def _base64_ai' backend/app/ai_provider_adapter.py
+grep -RInE 'azure_openai|bedrock|lepton|aimlapi|base64_ai|mistral' backend/app backend/migrations
+```
+
+| Provider | Handler classification in code | `PROVIDER_CATALOG`? | Evidence / conclusion |
+|---|---|---:|---|
+| Azure OpenAI (`azure_openai`) | Direct SDK handler `_azure_openai` | No | Handler exists at `ai_provider_adapter.py`; alias `azure -> azure_openai`; not seeded in catalog. |
+| AWS Bedrock (`aws_bedrock`) | Direct `boto3` handler `_bedrock` | No | Alias `aws/bedrock`; document route references it; not catalog-seeded. |
+| Lepton (`lepton`) | OpenAI-compatible handler `_openai_compatible` via `_lepton` | No | Handler and default base URL exist; no catalog row. |
+| AIMLAPI (`aimlapi`) | OpenAI-compatible handler | No | `aiml -> aimlapi` alias and base URL exist; no catalog row. |
+| Base64 AI (`base64_ai`) | Custom HTTP/base64 document handler `_base64_ai`; not the OpenAI-compatible path | No | Appears in document-processing route; requires URL in decrypted credential payload; no catalog row. |
+| Mistral (`mistral`) | Direct `mistralai` SDK handler `_mistral` | Yes | Catalog row exists with adapter `direct`; SDK is optional and was not installed/called in audit. |
+
+Additional exact finding: `azure_document_intelligence` appears in `DEFAULT_ROUTES`, but no dedicated catalog row or named `_dispatch` handler was found; absent a provider-specific handler it can fall through to the generic OpenAI-compatible path. This is **IMPLEMENTED-UNTESTED / configuration risk**, not evidence of a working Azure Document Intelligence integration. `PROVIDER_CATALOG` contains 24 listed providers including OmniRoute; aliases/handlers add names beyond the catalog.
+
+## 4. Complete database table inventory
+
+The following names were extracted from all `op.create_table` calls and model declarations. Purposes are based on columns and migration names.
+
+| Table | Purpose |
+|---|---|
+| `profiles` | Canonical user profile and personal form data. |
+| `addresses` | User address records. |
+| `education` | User qualification/institution/year/percentage data. |
+| `documents` | Private uploaded-document metadata and object references. |
+| `document_extractions` | OCR/document extraction results and status. |
+| `field_provenance` | Source/evidence mapping for extracted or verified fields. |
+| `verification_records` | Verification status/history for data or documents. |
+| `audit_logs` | Security and business audit events. |
+| `admin_api_keys` | Encrypted provider credential records and active flags. |
+| `dynamic_banners` | Commercial/marketing banner configuration. |
+| `multi_cloud_storage_nodes` | Legacy/initial storage failover nodes. |
+| `user_wallets` | Per-user credit balance. |
+| `transactions` | Payment transaction and credited amount ledger. |
+| `coupons` | Coupon definitions and discount rules. |
+| `coupon_redemptions` | User coupon redemption history. |
+| `referral_networks` | Referral relationships. |
+| `referral_rewards` | Referral reward records and settlement state. |
+| `knowledge_chunks` | Indexed knowledge/search chunks. |
+| `auth_users` | Canonical login users, status and role. |
+| `auth_sessions` | Refresh-token session records and expiry/revocation. |
+| `revoked_tokens` | Revoked access/session token identifiers. |
+| `auth_action_tokens` | Email verification/password-reset action tokens. |
+| `auth_identity_mappings` | External provider subject to canonical user mapping. |
+| `auth_oauth_states` | OAuth state/anti-CSRF exchange records. |
+| `auth_otp_challenges` | Phone OTP challenge, provider reference, attempts and expiry. |
+| `auth_provider_registry` | Configured external auth providers and methods. |
+| `website_registry` | Approved/verified website metadata and enablement. |
+| `website_health_history` | Website health checks, latency, status and failures. |
+| `form_tasks` | Durable workflow/task state. |
+| `task_steps` | Task step checkpoints and outcomes. |
+| `task_locks` | Worker lease/lock ownership and expiry. |
+| `browser_sessions` | User-owned Playwright session metadata. |
+| `browser_session_events` | Browser navigation/control/audit events. |
+| `workflow_events` | Orchestrator workflow event history. |
+| `ai_usage_ledger` | AI provider request, token, latency, cost and fallback usage. |
+| `ai_quota_config` | AI budget/quota configuration. |
+| `ai_provider_registry` | AI provider catalog, capability, priority and enablement. |
+| `ai_model_registry` | Provider model metadata/capabilities. |
+| `ai_provider_health` | Provider health, request/error rate and cooldown state. |
+| `ai_provider_policy` | Provider/user rate, token, cost and cooldown policy. |
+| `storage_provider_registry` | Storage provider endpoint/capacity/credential registry. |
+| `payment_attempts` | Payment attempt/provider-event history. |
+| `payment_refunds` | Refund requests and state. |
+| `payment_reconciliation` | Provider-to-ledger reconciliation records. |
+| `admin_action_previews` | Preview-confirm records for consequential admin actions. |
+| `platform_settings` | Durable platform/branding settings. |
+
+Evidence command: `python3 - <<'PY' ... re.findall(r'op\\.create_table...') ... PY` plus `grep -RIn '__tablename__' backend/app backend/migrations`.
+
+## 5. Complete endpoint inventory
+
+Auth labels below are from route dependencies and source inspection: **public** means no user credential; **user** means `require_user_id`/equivalent; **admin** means `require_system_admin`; **signature** means webhook signature/event headers are required in addition to route parsing.
+
+| Method | Path | Auth required | File |
+|---|---|---|---|
+| GET | `/health` | public | `backend/app/main.py` |
+| GET | `/ready` | public | `backend/app/main.py` |
+| POST | `/v1/profile` | user | `backend/app/routes.py` |
+| PUT | `/v1/profile` | user | `backend/app/routes.py` |
+| POST | `/v1/addresses` | user | `backend/app/routes.py` |
+| GET | `/v1/addresses` | user | `backend/app/routes.py` |
+| DELETE | `/v1/addresses/{address_id}` | user | `backend/app/routes.py` |
+| POST | `/v1/education` | user | `backend/app/routes.py` |
+| GET | `/v1/education` | user | `backend/app/routes.py` |
+| POST | `/v1/documents` | user | `backend/app/routes.py` |
+| GET | `/v1/documents` | user | `backend/app/routes.py` |
+| GET | `/v1/documents/{document_id}` | user | `backend/app/routes.py` |
+| POST | `/v1/documents/{document_id}/extract` | user | `backend/app/routes.py` |
+| GET | `/v1/documents/{document_id}/extraction` | user | `backend/app/routes.py` |
+| GET | `/v1/documents/{document_id}/download` | user | `backend/app/routes.py` |
+| DELETE | `/v1/documents/{document_id}` | user | `backend/app/routes.py` |
+| POST | `/v1/knowledge/reindex` | user | `backend/app/knowledge_routes.py` |
+| POST | `/v1/knowledge/search` | user | `backend/app/knowledge_routes.py` |
+| POST | `/v1/knowledge/context` | user | `backend/app/knowledge_routes.py` |
+| POST | `/v1/agent/plan` | user | `backend/app/agent_routes.py` |
+| POST | `/v1/browser/sessions` | user | `backend/app/browser_routes.py` |
+| POST | `/v1/browser/sessions/{session_id}/navigate` | user | `backend/app/browser_routes.py` |
+| GET | `/v1/browser/sessions/{session_id}/inspect` | user | `backend/app/browser_routes.py` |
+| POST | `/v1/browser/sessions/{session_id}/human` | user | `backend/app/browser_routes.py` |
+| GET | `/v1/browser/sessions/{session_id}/screenshot` | user | `backend/app/browser_routes.py` |
+| DELETE | `/v1/browser/sessions/{session_id}` | user | `backend/app/browser_routes.py` |
+| POST | `/v1/browser/sessions/{session_id}/live-token` | user | `backend/app/live_browser_routes.py` |
+| POST | `/v1/browser/sessions/{session_id}/live/agent-state` | user | `backend/app/live_browser_routes.py` |
+| POST | `/v1/forms/map` | user | `backend/app/form_mapping_routes.py` |
+| POST | `/v1/forms/fill` | user | `backend/app/form_mapping_routes.py` |
+| POST | `/v1/e2e/plan` | user | `backend/app/form_execution_routes.py` |
+| POST | `/v1/e2e/approvals` | user | `backend/app/form_execution_routes.py` |
+| POST | `/v1/e2e/fill` | user | `backend/app/form_execution_routes.py` |
+| POST | `/v1/approvals` | user | `backend/app/approval_routes.py` |
+| GET | `/v1/approvals/{approval_id}` | user | `backend/app/approval_routes.py` |
+| POST | `/v1/approvals/{approval_id}/approve` | user | `backend/app/approval_routes.py` |
+| POST | `/v1/workflows` | user | `backend/app/orchestrator_routes.py` |
+| GET | `/v1/workflows/{workflow_id}` | user | `backend/app/orchestrator_routes.py` |
+| POST | `/v1/workflows/{workflow_id}/url` | user | `backend/app/orchestrator_routes.py` |
+| POST | `/v1/workflows/{workflow_id}/confirm` | user | `backend/app/orchestrator_routes.py` |
+| POST | `/v1/workflows/{workflow_id}/open` | user | `backend/app/orchestrator_routes.py` |
+| POST | `/v1/workflows/{workflow_id}/human` | user | `backend/app/orchestrator_routes.py` |
+| POST | `/v1/workflows/{workflow_id}/otp` | user | `backend/app/orchestrator_routes.py` |
+| POST | `/v1/workflows/{workflow_id}/plan` | user | `backend/app/orchestrator_routes.py` |
+| POST | `/v1/workflows/{workflow_id}/fill` | user | `backend/app/orchestrator_routes.py` |
+| POST | `/v1/workflows/{workflow_id}/final-approval` | user | `backend/app/orchestrator_routes.py` |
+| POST | `/v1/workflows/{workflow_id}/submit` | user | `backend/app/orchestrator_routes.py` |
+| GET | `/v1/workflows/{workflow_id}/screenshot` | user | `backend/app/orchestrator_screenshot_route.py` |
+| POST | `/v1/universal/research` | user | `backend/app/universal_research_routes.py` |
+| POST | `/v1/auth/signup` | public | `backend/app/auth_routes.py` |
+| POST | `/v1/auth/login` | public | `backend/app/auth_routes.py` |
+| POST | `/v1/auth/refresh` | public with refresh token | `backend/app/auth_routes.py` |
+| POST | `/v1/auth/dev-token` | development-only/user header | `backend/app/auth_routes.py` |
+| POST | `/v1/auth/logout` | user/session | `backend/app/auth_routes.py` |
+| POST | `/v1/auth/verification/request` | public | `backend/app/auth_routes.py` |
+| POST | `/v1/auth/verification/confirm` | public token | `backend/app/auth_routes.py` |
+| POST | `/v1/auth/password-reset/request` | public | `backend/app/auth_routes.py` |
+| POST | `/v1/auth/password-reset/confirm` | public token | `backend/app/auth_routes.py` |
+| GET | `/v1/auth/providers` | public capability list | `backend/app/auth_routes.py` |
+| GET | `/v1/auth/oauth/{provider}/start` | public/state | `backend/app/auth_routes.py` |
+| GET | `/v1/auth/oauth/{provider}/callback` | public/state/code | `backend/app/auth_routes.py` |
+| POST | `/v1/auth/oauth/exchange` | public/state/code | `backend/app/auth_routes.py` |
+| POST | `/v1/auth/provider/token` | public/provider token | `backend/app/auth_routes.py` |
+| POST | `/v1/auth/otp/request` | user | `backend/app/auth_routes.py` |
+| POST | `/v1/auth/otp/verify` | user/challenge | `backend/app/auth_routes.py` |
+| POST | `/v1/auth/link` | user | `backend/app/auth_routes.py` |
+| GET | `/v1/auth/linked` | user | `backend/app/auth_routes.py` |
+| POST | `/payments/orders` | user | `backend/app/payment_routes.py` |
+| POST | `/payments/verify` | user | `backend/app/payment_routes.py` |
+| POST | `/payments/retry` | user | `backend/app/payment_routes.py` |
+| POST | `/payments/razorpay/webhook` | signature/event headers | `backend/app/payment_routes.py` |
+| POST | `/v1/tasks` | user | `backend/app/task_routes.py` |
+| GET | `/v1/tasks` | user | `backend/app/task_routes.py` |
+| GET | `/v1/tasks/{task_id}` | user | `backend/app/task_routes.py` |
+| POST | `/v1/tasks/{task_id}/claim` | user/worker identity | `backend/app/task_routes.py` |
+| POST | `/v1/tasks/{task_id}/transition` | user/worker identity | `backend/app/task_routes.py` |
+| POST | `/v1/tasks/{task_id}/enqueue` | user | `backend/app/task_routes.py` |
+| POST | `/v1/tasks/{task_id}/human-resume` | user | `backend/app/task_routes.py` |
+| POST | `/v1/tasks/{task_id}/heartbeat` | user/worker identity | `backend/app/task_routes.py` |
+| DELETE | `/v1/tasks/{task_id}/lock` | user/worker identity | `backend/app/task_routes.py` |
+| POST | `/v1/admin/keys/update` | admin | `backend/app/admin_routes.py` |
+| POST | `/v1/admin/pricing/config` | admin | `backend/app/admin_routes.py` |
+| POST | `/v1/admin/coupons` | admin | `backend/app/admin_routes.py` |
+| GET | `/v1/admin/summary` | admin | `backend/app/admin_routes.py` |
+| GET | `/v1/admin/users` | admin | `backend/app/admin_routes.py` |
+| GET | `/v1/admin/ai-usage` | admin | `backend/app/admin_routes.py` |
+| GET | `/v1/admin/tasks` | admin | `backend/app/admin_routes.py` |
+| GET | `/v1/admin/browser-sessions` | admin | `backend/app/admin_routes.py` |
+| GET | `/v1/admin/audit-logs` | admin | `backend/app/admin_routes.py` |
+| GET | `/v1/admin/payments` | admin | `backend/app/admin_routes.py` |
+| POST | `/v1/admin/payments/reconcile` | admin | `backend/app/admin_routes.py` |
+| GET | `/v1/admin/storage` | admin | `backend/app/admin_routes.py` |
+| GET | `/v1/admin/health` | admin | `backend/app/admin_routes.py` |
+| GET | `/v1/admin/provider-policy` | admin | `backend/app/admin_routes.py` |
+| PUT | `/v1/admin/provider-policy` | admin | `backend/app/admin_routes.py` |
+| POST | `/v1/admin/websites/{website_id}/health-check` | admin | `backend/app/admin_routes.py` |
+| PUT | `/v1/admin/websites/{website_id}/enable` | admin | `backend/app/admin_routes.py` |
+| PUT | `/v1/admin/websites/{website_id}/disable` | admin | `backend/app/admin_routes.py` |
+| GET | `/v1/admin/websites/{website_id}/health-history` | admin | `backend/app/admin_routes.py` |
+| POST | `/v1/admin/assistant/query` | admin | `backend/app/admin_routes.py` |
+| POST | `/v1/admin/assistant/preview` | admin | `backend/app/admin_routes.py` |
+| POST | `/v1/admin/assistant/confirm/{preview_id}` | admin | `backend/app/admin_routes.py` |
+| GET | `/v1/admin/websites` | admin | `backend/app/admin_routes.py` |
+| POST | `/v1/admin/websites` | admin | `backend/app/admin_routes.py` |
+| GET | `/v1/admin/providers` | admin | `backend/app/admin_routes.py` |
+| PUT | `/v1/admin/providers/{provider}` | admin | `backend/app/admin_routes.py` |
+| PUT | `/v1/admin/providers/{provider}/credential` | admin | `backend/app/admin_routes.py` |
+| GET | `/v1/admin/storage/providers` | admin | `backend/app/admin_routes.py` |
+| PUT | `/v1/admin/storage/providers/{provider}` | admin | `backend/app/admin_routes.py` |
+| GET | `/v1/admin/auth/providers` | admin | `backend/app/admin_routes.py` |
+| PUT | `/v1/admin/auth/providers/{provider}` | admin | `backend/app/admin_routes.py` |
+| PUT | `/v1/admin/auth/providers/{provider}/credential` | admin | `backend/app/admin_routes.py` |
+| PUT | `/v1/admin/storage/providers/{provider}/credential` | admin | `backend/app/admin_routes.py` |
+| POST | `/v1/admin/providers/{provider}/test` | admin | `backend/app/admin_routes.py` |
+| POST | `/v1/admin/providers/{provider}/models/discover` | admin | `backend/app/admin_routes.py` |
+| POST | `/v1/admin/storage/providers/{provider}/test` | admin | `backend/app/admin_routes.py` |
+| POST | `/v1/admin/auth/providers/{provider}/test` | admin | `backend/app/admin_routes.py` |
+| GET | `/v1/admin/workers` | admin | `backend/app/admin_routes.py` |
+| GET | `/v1/admin/branding` | admin | `backend/app/admin_routes.py` |
+| PUT | `/v1/admin/branding` | admin | `backend/app/admin_routes.py` |
+| GET | `/v1/admin/marketing/insights` | admin | `backend/app/admin_routes.py` |
+| POST | `/v1/admin/marketing/drafts` | admin | `backend/app/admin_routes.py` |
+
+Endpoint extraction command: `python3 /home/ubuntu/work/endpoint_inventory.py`; route prefixes were checked against `main.py` and each `APIRouter`. The two system endpoints are included manually. Payment routes are intentionally mounted at `/payments/*`, not `/v1/payments/*`, because `main.py` includes that router without an extra prefix.
+
+## 6. Every `FORMWISE_` environment variable
+
+All names below are fields in `backend/app/config.py` under `SettingsConfigDict(env_prefix="FORMWISE_")`. “Mandatory” means required for the stated production feature; “optional” means a safe default exists, although production may still need to override it.
+
+| Variable | Purpose | Mandatory/optional | Unsafe development default |
+|---|---|---|---|
+| `FORMWISE_APP_NAME` | API display name | optional | `Formwise Agent API` is harmless |
+| `FORMWISE_ENVIRONMENT` | development/production behavior | mandatory production choice | `development` |
+| `FORMWISE_DATABASE_URL` | DB connection | mandatory | local SQLite |
+| `FORMWISE_DATABASE_POOL_SIZE` | DB pool size | optional | `10` |
+| `FORMWISE_DATABASE_MAX_OVERFLOW` | DB overflow connections | optional | `20` |
+| `FORMWISE_DATABASE_POOL_TIMEOUT_SECONDS` | DB pool wait | optional | `30` |
+| `FORMWISE_DATABASE_POOL_RECYCLE_SECONDS` | DB connection recycle | optional | `1800` |
+| `FORMWISE_STORAGE_ROOT` | local private storage root | optional local / mandatory if local storage | `./private_storage` |
+| `FORMWISE_STORAGE_PROVIDER` | local/S3 provider selection | mandatory production choice | `local` |
+| `FORMWISE_STORAGE_S3_ENDPOINT_URL` | S3-compatible endpoint | mandatory for S3 | empty |
+| `FORMWISE_STORAGE_S3_BUCKET` | private bucket | mandatory for S3 | empty |
+| `FORMWISE_STORAGE_S3_ACCESS_KEY_ID` | S3 access key | mandatory for S3 | empty |
+| `FORMWISE_STORAGE_S3_SECRET_ACCESS_KEY` | S3 secret | mandatory for S3 | empty |
+| `FORMWISE_STORAGE_S3_REGION` | S3 region | mandatory for S3 | `ap-south-1` |
+| `FORMWISE_STORAGE_S3_SERVER_SIDE_ENCRYPTION` | object encryption mode | mandatory policy decision | `AES256` |
+| `FORMWISE_STORAGE_S3_KMS_KEY_ID` | KMS key | optional if AES256; mandatory for KMS policy | empty |
+| `FORMWISE_STORAGE_SIGNED_URL_TTL_SECONDS` | private URL lifetime | mandatory policy decision | `300` |
+| `FORMWISE_MAX_UPLOAD_SIZE_BYTES` | upload limit | optional | `10485760` |
+| `FORMWISE_BROWSER_HEADLESS` | browser display mode | optional | `true` |
+| `FORMWISE_BROWSER_TIMEOUT_MS` | browser action timeout | optional | `15000` |
+| `FORMWISE_BROWSER_NAVIGATION_TIMEOUT_MS` | page navigation timeout | optional | `20000` |
+| `FORMWISE_BROWSER_MAX_SESSIONS_PER_USER` | session cap | optional | `2` |
+| `FORMWISE_BROWSER_MAX_PAGES_PER_SESSION` | page cap | optional | `3` |
+| `FORMWISE_BROWSER_SCREENSHOT_ENABLED` | screenshot capture | optional/policy | `true` |
+| `FORMWISE_BROWSER_BLOCK_PRIVATE_NETWORKS` | SSRF/private network block | mandatory true in production | `true` |
+| `FORMWISE_BROWSER_ALLOW_LOCAL_DEMO_TARGET` | local demo access | mandatory false in production | `true` |
+| `FORMWISE_BROWSER_DEMO_TARGET_PORT` | demo port | optional local | `5000` |
+| `FORMWISE_BROWSER_USE_ENABLED` | browser-use AI path | optional | `false` |
+| `FORMWISE_BROWSER_USE_MODEL` | browser-use model name | optional | `gpt-5.6-luna` |
+| `FORMWISE_JWT_SECRET` | token signing secret | mandatory | `change-me-in-production` is unsafe |
+| `FORMWISE_JWT_ALGORITHM` | JWT algorithm | mandatory policy choice | `HS256` |
+| `FORMWISE_ALLOW_LEGACY_USER_HEADER` | development identity shortcut | mandatory false in production | `true` is unsafe |
+| `FORMWISE_SECURE_COOKIES` | secure cookie flag | mandatory true with HTTPS | `false` is unsafe |
+| `FORMWISE_CSRF_ENABLED` | CSRF protection | mandatory true | `true` |
+| `FORMWISE_SERPER_API_KEY` | optional search provider secret | optional | empty; fallback search applies |
+| `FORMWISE_SERPER_URL` | Serper endpoint | optional | official URL |
+| `FORMWISE_RESEARCH_TIMEOUT_SECONDS` | research timeout | optional | `20.0` |
+| `FORMWISE_CORS_ORIGINS` | allowed frontend origins | mandatory reviewed list | localhost origins |
+| `FORMWISE_FRONTEND_BASE_URL` | auth links/frontend URL | mandatory production URL | localhost |
+| `FORMWISE_EMAIL_PROVIDER` | email adapter | optional / mandatory if email launch | `brevo` |
+| `FORMWISE_EMAIL_DELIVERY_ENABLED` | send email switch | optional | `false` |
+| `FORMWISE_REDIS_URL` | queue/worker Redis | mandatory for durable worker | `redis://localhost:6379/0` |
+| `FORMWISE_REDIS_USERNAME` | Redis username | optional | empty |
+| `FORMWISE_REDIS_PASSWORD` | Redis password | mandatory if server requires | empty |
+| `FORMWISE_REDIS_TLS` | Redis TLS | mandatory production policy | `false` |
+| `FORMWISE_REDIS_CA_FILE` | Redis CA path | optional/TLS deployments | empty |
+| `FORMWISE_REDIS_SOCKET_TIMEOUT_SECONDS` | Redis timeout | optional | `5.0` |
+| `FORMWISE_REDIS_POOL_MAX_CONNECTIONS` | Redis pool cap | optional | `50` |
+| `FORMWISE_TASK_QUEUE_NAME` | task queue name | optional | `formwise:tasks` |
+| `FORMWISE_TASK_DEAD_LETTER_QUEUE_NAME` | dead-letter queue | optional | `formwise:tasks:dead` |
+| `FORMWISE_TASK_WORKER_LEASE_SECONDS` | worker lease | optional | `60` |
+| `FORMWISE_TASK_WORKER_HEARTBEAT_SECONDS` | heartbeat interval | optional | `15` |
+| `FORMWISE_TASK_WORKER_CONCURRENCY` | worker concurrency | optional | `2` |
+| `FORMWISE_TASK_WORKER_SHUTDOWN_SECONDS` | graceful shutdown | optional | `30` |
+| `FORMWISE_TASK_MAX_RETRIES` | retry count | optional/policy | `3` |
+| `FORMWISE_TASK_RETRY_BASE_SECONDS` | retry backoff base | optional | `2.0` |
+| `FORMWISE_TASK_RETRY_MAX_SECONDS` | retry backoff ceiling | optional | `300.0` |
+| `FORMWISE_API_REQUEST_SIZE_LIMIT_BYTES` | API body limit | mandatory policy | `12582912` |
+| `FORMWISE_RATE_LIMIT_PER_MINUTE` | API rate limit | mandatory policy | `120` |
+| `FORMWISE_LIVE_BROWSER_ENABLED` | live browser switch | optional | `true` |
+| `FORMWISE_LIVE_INPUT_ENABLED` | remote input switch | mandatory human-gate policy | `true` |
+| `FORMWISE_LIVE_FRAME_INTERVAL_MS` | frame interval | optional | `250` |
+| `FORMWISE_LIVE_POLICY_CHECK_INTERVAL_MS` | live policy interval | optional | `750` |
+| `FORMWISE_LIVE_JPEG_QUALITY` | frame quality | optional | `60` |
+| `FORMWISE_LIVE_TOKEN_TTL_SECONDS` | live token lifetime | mandatory policy | `300` |
+| `FORMWISE_LIVE_MAX_CONNECTIONS_PER_SESSION` | live connection cap | optional | `1` |
+| `FORMWISE_LIVE_MAX_MESSAGE_BYTES` | live message limit | optional | `65536` |
+| `FORMWISE_LIVE_REQUIRE_SECURE_TRANSPORT` | require HTTPS/WSS | mandatory true in production | `false` is unsafe |
+| `FORMWISE_AI_FAILOVER_BUDGET_SECONDS` | AI failover deadline | optional | `1.8` |
+| `FORMWISE_AI_PROVIDER_TIMEOUT_SECONDS` | provider timeout | optional | `0.75` |
+| `FORMWISE_AI_ROUTE_VISION_FORM_READING` | vision provider order | optional | `gemini,groq,anthropic,openrouter` |
+| `FORMWISE_AI_ROUTE_DOCUMENT_PROCESSING` | document provider order | optional | `base64_ai,azure_document_intelligence,aws_bedrock,gemini` contains unverified providers |
+| `FORMWISE_AI_ROUTE_SEMANTIC_ANALYSIS` | semantic route | optional | `anthropic,openai,gemini,mistral,cohere` |
+| `FORMWISE_AI_ROUTE_GENERAL` | general route | optional | `openai,anthropic,gemini,groq,openrouter` |
+
+Provider credentials such as Brevo, AI, Razorpay and external auth credentials are not `FORMWISE_` fields in this settings class; they are expected through encrypted admin provider records. Never put their real values in `.env` committed to Git.
+
+## 7. CI runner requirement
+
+Yes. `.github/workflows/demo-browser-e2e.yml` declares `runs-on: [self-hosted, Windows, X64]` and uses PowerShell, `Test-NetConnection`, `cmd.exe`, Node and a local port-5000 demo server. It therefore needs an online GitHub Actions self-hosted runner matching the `Windows` and `X64` labels. The backend workflow also uses the same self-hosted Windows labels. The frontend and production-validation workflows use `ubuntu-latest`.
+
+If no matching self-hosted runner is online, GitHub leaves the job **queued** with no execution; the PR check remains pending and does not produce a pass. Depending on branch protection, the PR cannot merge while that required check is pending. It does not automatically fall back to `ubuntu-latest`. The new local Python fixture makes the test itself self-contained, but the existing workflow still has a runner/PowerShell requirement.
+
+## 8. Full Git-history secret scan
+
+Commands run against every commit reachable from the branch (`git rev-list HEAD`) and every reachable object/blob:
+
+```bash
+for c in $(git rev-list HEAD); do
+  git grep -nI -E 'sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|BEGIN (RSA|EC|OPENSSH) PRIVATE KEY|ghp_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}' "$c"
+done
+git rev-list --objects HEAD | ... git cat-file -p ... | grep -aEn -E '<same patterns>'
+```
+
+**Result:** 5 reachable commits were scanned (`11914de`, `254eab1`, `cf61c4d`, `83433c6`, baseline `181c8ce`); both commit-content and reachable-blob scans returned **no matches**. Lockfiles were excluded from the high-signal commit grep because package metadata can contain non-secret token-like strings; reachable blobs were still scanned with the same patterns. This is evidence against the tested patterns, not a guarantee against every possible secret format.
