@@ -4,6 +4,7 @@ import json
 import logging
 import threading
 import time
+from uuid import uuid4
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Sequence
 
@@ -41,13 +42,48 @@ PROVIDER_ALIASES = {
     "aiml": "aimlapi",
     "novita_ai": "novita",
     "base64": "base64_ai",
+    "grok": "xai",
+    "xai_grok": "xai",
+    "qwen_alibaba": "qwen",
+    "glm": "zai",
+    "zhipu": "zai",
+    "kimi": "moonshot",
+    "alibaba": "qwen",
 }
+
+PROVIDER_CATALOG: tuple[dict[str, Any], ...] = (
+    {"provider": "gemini", "name": "Google Gemini / AI Studio", "adapter": "direct", "free_tier": True},
+    {"provider": "groq", "name": "Groq", "adapter": "direct", "free_tier": True},
+    {"provider": "openai", "name": "OpenAI", "adapter": "direct", "free_tier": False},
+    {"provider": "anthropic", "name": "Anthropic", "adapter": "direct", "free_tier": False},
+    {"provider": "deepseek", "name": "DeepSeek", "adapter": "openai_compatible", "free_tier": True},
+    {"provider": "xai", "name": "xAI / Grok", "adapter": "openai_compatible", "free_tier": False},
+    {"provider": "openrouter", "name": "OpenRouter", "adapter": "gateway", "free_tier": True},
+    {"provider": "huggingface", "name": "Hugging Face", "adapter": "direct", "free_tier": True},
+    {"provider": "mistral", "name": "Mistral", "adapter": "direct", "free_tier": True},
+    {"provider": "cerebras", "name": "Cerebras", "adapter": "direct", "free_tier": True},
+    {"provider": "nvidia_nim", "name": "NVIDIA NIM", "adapter": "openai_compatible", "free_tier": False},
+    {"provider": "together", "name": "Together AI", "adapter": "direct", "free_tier": False},
+    {"provider": "fireworks_ai", "name": "Fireworks AI", "adapter": "direct", "free_tier": False},
+    {"provider": "cohere", "name": "Cohere", "adapter": "direct", "free_tier": True},
+    {"provider": "perplexity", "name": "Perplexity", "adapter": "openai_compatible", "free_tier": False},
+    {"provider": "qwen", "name": "Qwen / Alibaba", "adapter": "openai_compatible", "free_tier": True},
+    {"provider": "deepinfra", "name": "DeepInfra", "adapter": "openai_compatible", "free_tier": True},
+    {"provider": "novita", "name": "Novita AI", "adapter": "openai_compatible", "free_tier": True},
+    {"provider": "siliconflow", "name": "SiliconFlow", "adapter": "openai_compatible", "free_tier": True},
+    {"provider": "hyperbolic", "name": "Hyperbolic", "adapter": "openai_compatible", "free_tier": True},
+    {"provider": "zai", "name": "Z.ai / GLM", "adapter": "openai_compatible", "free_tier": True},
+    {"provider": "moonshot", "name": "Moonshot / Kimi", "adapter": "openai_compatible", "free_tier": True},
+    {"provider": "minimax", "name": "MiniMax", "adapter": "openai_compatible", "free_tier": False},
+    {"provider": "sambanova", "name": "SambaNova", "adapter": "openai_compatible", "free_tier": True},
+    {"provider": "omniroute", "name": "OmniRoute Gateway", "adapter": "gateway", "free_tier": True},
+)
 
 DEFAULT_ROUTES: dict[str, tuple[str, ...]] = {
     "vision_form_reading": ("gemini", "groq", "anthropic", "openrouter"),
     "document_processing": ("base64_ai", "azure_document_intelligence", "aws_bedrock", "gemini"),
     "semantic_analysis": ("anthropic", "openai", "gemini", "mistral", "cohere"),
-    "general": ("openai", "anthropic", "gemini", "groq", "openrouter"),
+    "general": ("gemini", "groq", "deepseek", "openrouter", "openai", "anthropic"),
 }
 
 
@@ -121,13 +157,18 @@ class MultiAIProviderAdapter:
         self._lock = threading.RLock()
 
     def execute(self, request: AIRequest) -> AIProviderResult:
-        providers = tuple(request.provider_route or self.routes.get(request.task, self.routes["general"]))
+        providers = tuple(request.provider_route or self.smart_route(request))
         if not providers:
             raise ValueError("at least one provider is required")
 
         started = time.monotonic()
         deadline = started + min(self.failover_budget_seconds, request.timeout_seconds * max(1, len(providers)))
         failures: list[tuple[str, Exception]] = []
+        request_id = str(request.metadata.get("request_id") or uuid4())
+        user_id = request.metadata.get("user_id")
+        task_id = request.metadata.get("task_id")
+        if user_id:
+            self._enforce_quota(str(user_id))
 
         for provider_name in providers:
             if time.monotonic() >= deadline:
@@ -135,13 +176,22 @@ class MultiAIProviderAdapter:
             provider = self._canonical_provider(provider_name)
             provider_started = time.monotonic()
             try:
+                if request.metadata.get("user_id") and not self._provider_allowed(provider, request):
+                    continue
                 credentials = self._load_credentials(provider)
                 result = self._dispatch(provider, request, credentials, max(0.1, min(request.timeout_seconds, deadline - time.monotonic())))
-                self._audit("provider.success", provider=provider, task=request.task, model=request.model, latency_ms=self._elapsed_ms(provider_started))
+                latency_ms = self._elapsed_ms(provider_started)
+                self._record_usage(request, request_id, result, latency_ms, "success", fallback_from=failures[-1][0] if failures else None)
+                if request.metadata.get("user_id"):
+                    self._record_provider_health(provider, success=True)
+                self._audit("provider.success", provider=provider, task=request.task, model=request.model, latency_ms=latency_ms)
                 return result
             except Exception as exc:  # deliberate boundary around third-party SDKs
                 failures.append((provider, exc))
                 transient = self._is_transient(exc)
+                self._record_usage(request, request_id, AIProviderResult(provider, request.model, "", {}, {}, self._elapsed_ms(provider_started)), self._elapsed_ms(provider_started), "failure", error_type=type(exc).__name__)
+                if request.metadata.get("user_id"):
+                    self._record_provider_health(provider, success=False)
                 self._audit(
                     "provider.failure",
                     provider=provider,
@@ -156,6 +206,128 @@ class MultiAIProviderAdapter:
 
         summary = ", ".join(f"{provider}:{type(exc).__name__}" for provider, exc in failures) or "no provider attempted"
         raise AIProviderExhausted(f"AI failover exhausted within budget: {summary}")
+
+    def smart_route(self, request: AIRequest) -> tuple[str, ...]:
+        """Build a capability-aware free-first route from the durable registry."""
+        capability = str(request.metadata.get("capability") or ("vision" if request.task == "vision_form_reading" else "document" if request.task == "document_processing" else "general"))
+        fallback = tuple(self.routes.get(request.task, self.routes["general"]))
+        try:
+            rows = self.db.execute(text("SELECT provider,capabilities_json,reasoning,free_tier,priority,fallback_order FROM ai_provider_registry WHERE enabled=true ORDER BY priority,fallback_order,provider")).mappings().all()
+            eligible = []
+            for row in rows:
+                capabilities = json.loads(row["capabilities_json"] or "[]")
+                if capability not in capabilities and "general" not in capabilities:
+                    continue
+                if request.metadata.get("reasoning") and not row["reasoning"]:
+                    continue
+                eligible.append((0 if row["free_tier"] else 1, int(row["priority"]), int(row["fallback_order"]), str(row["provider"])))
+            return tuple(item[3] for item in sorted(eligible)) or fallback
+        except Exception:
+            LOGGER.debug("provider registry routing unavailable; using static route", exc_info=True)
+            return fallback
+
+    def discover_models(self, provider: str, *, timeout_seconds: float = 5.0) -> list[dict[str, Any]]:
+        """Discover models where the provider exposes an OpenAI-compatible models endpoint."""
+        canonical = self._canonical_provider(provider)
+        credentials = self._load_credentials(canonical)
+        config = self._mapping(credentials.payload)
+        endpoint = str(config.get("base_url", "")).rstrip("/")
+        if not endpoint:
+            raise AIProviderUnavailable(f"model discovery endpoint is not configured for {canonical}")
+        api_key = str(config.get("api_key", credentials.payload if isinstance(credentials.payload, str) else ""))
+        try:
+            response = self._http_client_factory(timeout=timeout_seconds).get(f"{endpoint}/models", headers={"Authorization": f"Bearer {api_key}"})
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as exc:
+            raise AIProviderUnavailable(f"model discovery failed for {canonical}") from exc
+        models = payload.get("data", []) if isinstance(payload, Mapping) else []
+        return [{"id": str(item.get("id")), "provider": canonical, "capabilities": ["general"], "reasoning": any(token in str(item.get("id", "")).lower() for token in ("reason", "thinking", "r1", "o1", "o3"))} for item in models if isinstance(item, Mapping) and item.get("id")]
+
+    def _provider_allowed(self, provider: str, request: AIRequest) -> bool:
+        """Apply administrator policy and database-backed rate/cooldown limits."""
+        try:
+            policy = self.db.execute(text("SELECT enabled, daily_tokens, monthly_tokens, daily_cost, monthly_cost, requests_per_minute, cooldown_seconds FROM ai_provider_policy WHERE provider = :provider"), {"provider": provider}).mappings().first()
+            if not policy:
+                return True
+            if not policy["enabled"]:
+                return False
+            health = self.db.execute(text("SELECT cooldown_until FROM ai_provider_health WHERE provider = :provider"), {"provider": provider}).mappings().first()
+            if health and health["cooldown_until"]:
+                return False
+            user_id = str(request.metadata["user_id"])
+            usage = self.db.execute(text("""
+                SELECT COALESCE(SUM(total_tokens),0) tokens, COALESCE(SUM(estimated_cost),0) cost,
+                       COUNT(*) FILTER (WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '1 minute') requests
+                FROM ai_usage_ledger WHERE provider=:provider AND user_id=:user_id
+                AND created_at >= CURRENT_TIMESTAMP - INTERVAL '1 month'
+            """), {"provider": provider, "user_id": user_id}).mappings().first()
+            if policy["requests_per_minute"] and int(usage["requests"] or 0) >= int(policy["requests_per_minute"]):
+                return False
+            if policy["monthly_tokens"] and int(usage["tokens"] or 0) >= int(policy["monthly_tokens"]):
+                return False
+            if policy["monthly_cost"] and float(usage["cost"] or 0) >= float(policy["monthly_cost"]):
+                return False
+            return True
+        except AIProviderError:
+            raise
+        except Exception:
+            LOGGER.debug("AI provider policy lookup unavailable", exc_info=True)
+            return True
+
+    def _record_provider_health(self, provider: str, *, success: bool) -> None:
+        try:
+            if success:
+                self.db.execute(text("""
+                    INSERT INTO ai_provider_health(provider,status,request_count,last_success_at,updated_at)
+                    VALUES (:provider,'healthy',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+                    ON CONFLICT (provider) DO UPDATE SET status='healthy', request_count=ai_provider_health.request_count+1, last_success_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+                """), {"provider": provider})
+            else:
+                self.db.execute(text("""
+                    INSERT INTO ai_provider_health(provider,status,error_count,request_count,last_failure_at,updated_at)
+                    VALUES (:provider,'degraded',1,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+                    ON CONFLICT (provider) DO UPDATE SET status='degraded', error_count=ai_provider_health.error_count+1, request_count=ai_provider_health.request_count+1, error_rate=(ai_provider_health.error_count+1)::numeric/(ai_provider_health.request_count+1), last_failure_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+                """), {"provider": provider})
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+
+    def _enforce_quota(self, user_id: str) -> None:
+        """Apply database-backed user and global budget limits before an AI call."""
+        try:
+            row = self.db.execute(text("""
+                SELECT COALESCE(SUM(total_tokens), 0) AS tokens, COALESCE(SUM(estimated_cost), 0) AS cost
+                FROM ai_usage_ledger WHERE user_id = :user_id AND created_at >= CURRENT_TIMESTAMP - INTERVAL '1 day'
+            """), {"user_id": user_id}).mappings().first()
+            if row and int(row["tokens"] or 0) >= 100_000:
+                raise AIProviderError("daily AI token quota exceeded")
+            if row and float(row["cost"] or 0) >= 25:
+                raise AIProviderError("daily AI budget exceeded")
+        except AIProviderError:
+            raise
+        except Exception:
+            # Local test databases may not have the production ledger yet; provider execution remains usable.
+            LOGGER.debug("AI quota lookup unavailable", exc_info=True)
+
+    def _record_usage(self, request: AIRequest, request_id: str, result: AIProviderResult, latency_ms: int, status: str, *, fallback_from: str | None = None, error_type: str | None = None) -> None:
+        if not request.metadata.get("user_id"):
+            return
+        usage = result.usage or {}
+        input_tokens = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
+        output_tokens = int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
+        total_tokens = int(usage.get("total_tokens", input_tokens + output_tokens) or 0)
+        estimated_cost = float(request.metadata.get("estimated_cost_per_1k", 0)) * total_tokens / 1000
+        try:
+            self.db.execute(text("""
+                INSERT INTO ai_usage_ledger
+                (usage_id, provider, model, request_id, task_name, user_id, task_id, input_tokens, output_tokens, total_tokens, latency_ms, status, fallback_from, estimated_cost, error_type, created_at)
+                VALUES (:usage_id, :provider, :model, :request_id, :task_name, :user_id, :task_id, :input_tokens, :output_tokens, :total_tokens, :latency_ms, :status, :fallback_from, :estimated_cost, :error_type, CURRENT_TIMESTAMP)
+            """), {"usage_id": str(uuid4()), "provider": result.provider, "model": result.model, "request_id": request_id, "task_name": request.task, "user_id": str(request.metadata.get("user_id")), "task_id": request.metadata.get("task_id"), "input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": total_tokens, "latency_ms": latency_ms, "status": status, "fallback_from": fallback_from, "estimated_cost": estimated_cost, "error_type": error_type})
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            LOGGER.exception("AI usage ledger write failed")
 
     def _load_credentials(self, provider: str) -> ProviderCredentials:
         # PostgreSQL/Supabase path uses FOR UPDATE as required. SQLite accepts the same query
@@ -197,6 +369,8 @@ class MultiAIProviderAdapter:
                 "mistral": self._mistral,
                 "base64_ai": self._base64_ai,
             }
+            if provider in {"xai", "qwen", "deepinfra", "novita", "siliconflow", "hyperbolic", "zai", "moonshot", "minimax", "sambanova", "omniroute"}:
+                return self._openai_compatible(request, credentials, timeout, provider=provider)
             handler = handlers.get(provider)
             if handler is None:
                 return self._openai_compatible(request, credentials, timeout, provider=provider)

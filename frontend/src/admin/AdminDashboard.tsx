@@ -3,60 +3,36 @@ import './admin-dashboard.css';
 
 type AdminTab = 'cockpit' | 'vault' | 'growth';
 type Provider = { name: string; short: string; tier: string; masked: string; latency: string; configured: boolean };
-type UserRow = { id: string; name: string; plan: string; credits: number; status: string; spend: string; lastJob: string };
+type UserRow = { id: string; name: string; plan: string; credits: number; status: string; spend: string; lastJob: string; lastTransactionId?: string; lastTransactionStatus?: string };
+type AdminSummary = { users:number; websites:number; enabled_websites:number; audit_events:number; tasks?:number; browser_sessions?:number; ai_usage?:number };
+type ProviderPolicy = { provider:string; priority:number; enabled:boolean; status?:string; error_rate?:string };
+type WebsiteHealth = { website_id:string; name:string; verified:boolean; enabled:boolean; health_status:string; version:string };
+type LiveProvider = { provider:string; display_name?:string; configured:boolean; enabled:boolean; status?:string; priority:number; fallback_order:number; capabilities?:string[] };
 
 const API = localStorage.getItem('formwise_api') || 'http://localhost:8000';
-const adminToken = () => localStorage.getItem('formwise_admin_token') || '';
+const adminToken = () => localStorage.getItem('formwise_access_token') || localStorage.getItem('formwise_admin_token') || '';
 
 const PROVIDERS: Provider[] = [
-  ['OpenAI','OA','GPT-4o / o1','sk-proj-••••••••••w9Z2','142ms',true],
-  ['Google Gemini','GM','1.5 Pro / Flash','AIzaSy••••••••••8kL0','98ms',true],
-  ['Anthropic','AN','Claude 3.5 Sonnet / Opus','sk-ant-••••••••••7F1a','165ms',true],
-  ['AWS Bedrock','AWS','Claude / Llama / Titan','AKIA••••••••••92QX','110ms',true],
-  ['Groq','GQ','Llama 3.3 70B / Mixtral','gsk_••••••••••p41M','42ms',true],
-  ['DeepSeek','DS','R1 / V3','sk-ds-••••••••••01Ab','210ms',true],
-  ['Perplexity AI','PX','Sonar Pro Search','pplx-••••••••••44Xc','180ms',true],
-  ['Base64.ai','B64','Zero-Footprint OCR','b64_live_••••••99Jk','88ms',true],
-  ['OpenRouter','OR','Universal Gateway','', '—',false],
-  ['xAI Grok','XG','Grok 4 / Fast','xai-••••••••••2Qm8','121ms',true],
-  ['Mistral','MI','Large / Medium','mistral-••••••••••9T2p','151ms',true],
-  ['Cohere','CO','Command R+ / Embed','co-••••••••••4Kq1','134ms',true],
-  ['Fireworks AI','FW','DeepSeek / Llama','fw-••••••••••7Gd4','73ms',true],
-  ['Cerebras','CB','Llama / Qwen','csk-••••••••••3Pz8','51ms',true],
-  ['Hugging Face','HF','Inference Endpoints','hf_••••••••••6Mb2','164ms',true],
-  ['Together AI','TG','OpenAI-Compatible','tg-••••••••••8Ld1','95ms',true],
-  ['Azure Document AI','AZ','Document Intelligence','az-••••••••••5Na0','126ms',true],
-  ['Ollama','OL','Self-Hosted Local','local••••••••••','24ms',true],
-  ['Cloudflare AI','CF','Workers AI','cf-••••••••••1Vb7','64ms',true],
-  ['AI21 Labs','AI','Jamba / Jurassic','ai21-••••••••••6Ks4','173ms',true],
-  ['Voyage AI','VO','Embeddings / Rerank','voy-••••••••••9Hs1','147ms',true],
-  ['Jina AI','JI','Reader / Embeddings','jina-••••••••••2Fx9','132ms',true],
-  ['NVIDIA NIM','NV','Llama / Nemotron','nim-••••••••••4Rt6','91ms',true],
-  ['Meta Llama API','LM','Llama Hosted','llama-••••••••••5Qa2','106ms',true],
+  ['OpenAI','OA','OpenAI-compatible','', '—',false],
+  ['Google Gemini','GM','Google Gemini','', '—',false],
+  ['Anthropic','AN','Anthropic','', '—',false],
+  ['Groq','GQ','OpenAI-compatible','', '—',false],
+  ['OpenRouter','OR','OpenAI-compatible','', '—',false],
+  ['Mistral','MI','OpenAI-compatible','', '—',false],
+  ['Ollama','OL','Self-hosted local','', '—',false],
 ].map(([name,short,tier,masked,latency,configured]) => ({name,short,tier,masked,latency,configured}));
 
-const STORAGE_NODES = [
-  { name: 'Oracle Cloud Free Tier', bucket: 'fw-canonical-vault-01', ping: '28ms', status: 'ACTIVE', priority: 1 },
-  { name: 'IBM Cloud Object Storage', bucket: 'ibm-fw-audit-archive', ping: '44ms', status: 'ACTIVE', priority: 2 },
-  { name: 'Cloudflare R2', bucket: 'r2-form-assets-live', ping: '12ms', status: 'ACTIVE', priority: 3 },
-  { name: 'Backblaze B2', bucket: 'b2-raw-dom-snapshots', ping: '36ms', status: 'ACTIVE', priority: 4 },
-  { name: 'Supabase Storage', bucket: 'supa-ephemeral-tokens', ping: '19ms', status: 'ACTIVE', priority: 5 },
-];
+const STORAGE_NODES: { name:string; bucket:string; ping:string; status:string; priority:number }[] = [];
 
 const AUTH_GATEWAYS = [
-  ['Phone OTP Gateway','Firebase SDK',true],
-  ['Google Social Auth','OAuth 2.0 PKCE',true],
-  ['Email / Magic Link Authentication','Native mail flow',true],
+  ['Phone OTP Gateway','Firebase SDK',false],
+  ['Google Social Auth','OAuth 2.0 PKCE',false],
+  ['Email / Magic Link Authentication','Native mail flow',false],
   ['WhatsApp OTP Gateway','Meta Cloud API',false],
 ];
 
-const INITIAL_USERS: UserRow[] = [
-  { id:'USR-92105', name:'Priya Sundaram', plan:'Enterprise', credits:840, status:'ACTIVE', spend:'₹18,420', lastJob:'California DMV Real ID' },
-  { id:'USR-84192', name:'Arjun Mehta', plan:'Pro', credits:410, status:'ACTIVE', spend:'₹9,840', lastJob:'USCIS I-9 Form Upload' },
-  { id:'USR-77319', name:'Rhea Kapoor', plan:'Premium', credits:1220, status:'ACTIVE', spend:'₹12,440', lastJob:'IRS Tax Stamp Verification' },
-  { id:'USR-66112', name:'Kabir Sharma', plan:'Basic', credits:94, status:'WATCH', spend:'₹1,920', lastJob:'Vendor Onboarding Flow v4.2' },
-  { id:'USR-54108', name:'Neha Verma', plan:'Pro', credits:532, status:'ACTIVE', spend:'₹7,680', lastJob:'Health Insurance Enrollment' },
-];
+const INITIAL_USERS: UserRow[] = [];
+const EMPTY_USER: UserRow = { id:'unavailable', name:'No live user selected', plan:'—', credits:0, status:'unavailable', spend:'—', lastJob:'—' };
 
 const formatInr = (value: number) => new Intl.NumberFormat('en-IN', { style:'currency', currency:'INR', maximumFractionDigits:0 }).format(value);
 
@@ -97,31 +73,60 @@ export default function AdminDashboard() {
   const [keyValue, setKeyValue] = useState('');
   const [users, setUsers] = useState(INITIAL_USERS);
   const [busyAction, setBusyAction] = useState('');
-  const [status, setStatus] = useState('SYSTEM READY · ROOT ENCLAVE');
-  const [logs, setLogs] = useState<string[]>([
-    '[14:32:04] ADMIN: Change credit price to ₹3 and disable DIWALI50 coupon',
-    '[14:32:05] CO-PILOT: ✓ Executed: credit exchange adjusted; DIWALI50 marked revoked.',
-    '[14:38:19] ADMIN: Run synthetic integrity check on Groq and Claude 3.5 providers',
-    '[14:38:20] CO-PILOT: ✓ Groq LPU response verified (42ms). Claude verified (165ms).',
-  ]);
+  const [status, setStatus] = useState('SYSTEM READY · LIVE DATA REQUIRED');
+  const [logs, setLogs] = useState<string[]>(['[SYSTEM] No synthetic activity loaded. Connect the admin API to view audit events.']);
   const [command, setCommand] = useState('');
   const [pricing, setPricing] = useState({ credits:'1', formCost:'3', refund:'5', discount:'15' });
   const [authEnabled, setAuthEnabled] = useState(AUTH_GATEWAYS.map(x => Boolean(x[2])));
   const [bannerEnabled, setBannerEnabled] = useState(true);
-  const [bannerUrl, setBannerUrl] = useState('https://cdn.formwise.ai/banner/enterprise-top.webp');
-  const [bannerLink, setBannerLink] = useState('https://formwise.ai/upgrade');
-  const [coupon, setCoupon] = useState({ code:'LAUNCH50', type:'percentage', value:'50', maxUses:'2000', expiry:'2026-11-30' });
+  const [bannerUrl, setBannerUrl] = useState('');
+  const [bannerLink, setBannerLink] = useState('');
+  const [coupon, setCoupon] = useState({ code:'', type:'percentage', value:'', maxUses:'', expiry:'' });
   const [referee, setReferee] = useState(20);
   const [referrer, setReferrer] = useState(10);
-  const [refundSearch, setRefundSearch] = useState('USR-92105');
+  const [refundSearch, setRefundSearch] = useState('');
   const [refundState, setRefundState] = useState<'idle'|'success'|'error'>('idle');
+  const [summary, setSummary] = useState<AdminSummary | null>(null);
+  const [marketingInsights, setMarketingInsights] = useState<{users:number;new_users_30d:number;active_users_30d:number;tasks_30d:number} | null>(null);
+  const [aiUsage, setAiUsage] = useState<{total_tokens:number; total_cost:string}>({total_tokens:0, total_cost:'0'});
+  const [providerPolicy, setProviderPolicy] = useState<ProviderPolicy[]>([]);
+  const [websites, setWebsites] = useState<WebsiteHealth[]>([]);
+  const [liveProviders, setLiveProviders] = useState<LiveProvider[]>([]);
+  const [storageProviders, setStorageProviders] = useState<Array<{provider:string;display_name:string;health:string;enabled:boolean}>>([]);
+  const [authProviders, setAuthProviders] = useState<Array<{provider:string;display_name:string;health:string;enabled:boolean}>>([]);
 
   useEffect(() => {
     localStorage.setItem('formwise_maintenance_mode', String(maintenance));
     window.dispatchEvent(new CustomEvent('formwise:maintenance-mode', { detail: { enabled: maintenance } }));
   }, [maintenance]);
 
-  const selectedUser = useMemo(() => users.find(u => u.id === refundSearch) || users[0], [refundSearch, users]);
+  useEffect(() => {
+    Promise.all([
+      adminRequest<AdminSummary>('/v1/admin/summary'),
+      adminRequest<{records:unknown[]; total_tokens:number; total_cost:string}>('/v1/admin/ai-usage'),
+      adminRequest<Array<{user_id:string; email:string; status:string; role:string; credits?:string; last_transaction_id?:string; last_transaction_status?:string}>>('/v1/admin/users'),
+      adminRequest<ProviderPolicy[]>('/v1/admin/provider-policy'),
+      adminRequest<WebsiteHealth[]>('/v1/admin/websites'),
+      adminRequest<LiveProvider[]>('/v1/admin/providers'),
+      adminRequest<Array<{provider:string;display_name:string;health:string;enabled:boolean}>>('/v1/admin/storage/providers'),
+      adminRequest<Array<{provider:string;display_name:string;health:string;enabled:boolean}>>('/v1/admin/auth/providers'),
+      adminRequest<{users:number;new_users_30d:number;active_users_30d:number;tasks_30d:number}>('/v1/admin/marketing/insights'),
+    ]).then(([liveSummary, liveUsage, liveUsers, livePolicy, liveWebsites, liveAIProviders, liveStorageProviders, liveAuthProviders, liveMarketing]) => {
+      setSummary(liveSummary);
+      setAiUsage({total_tokens: liveUsage.total_tokens, total_cost: liveUsage.total_cost});
+      setUsers(liveUsers.map(user => ({id:user.user_id, name:user.email, plan:user.role, credits:Number(user.credits || 0), status:user.status, spend:'—', lastJob:user.last_transaction_status || '—', lastTransactionId:user.last_transaction_id, lastTransactionStatus:user.last_transaction_status})));
+      setProviderPolicy(livePolicy);
+      setWebsites(liveWebsites);
+      setLiveProviders(liveAIProviders);
+      setStorageProviders(liveStorageProviders);
+      setAuthProviders(liveAuthProviders);
+      setMarketingInsights(liveMarketing);
+      setProviders(liveAIProviders.map(item => ({name:item.display_name || item.provider, short:item.provider.slice(0,2).toUpperCase(), tier:item.status || 'unconfigured', masked:item.configured ? '•••• configured' : '', latency:'—', configured:item.configured})));
+      setStatus('LIVE DATABASE TELEMETRY CONNECTED');
+    }).catch(error => setStatus(error instanceof Error ? error.message : 'Admin telemetry unavailable.'));
+  }, []);
+
+  const selectedUser = useMemo(() => users.find(u => u.id === refundSearch) || users[0] || EMPTY_USER, [refundSearch, users]);
 
   const pushLog = (line:string) => setLogs(current => [...current, `[${new Date().toLocaleTimeString('en-GB')}] ${line}`]);
 
@@ -170,10 +175,12 @@ export default function AdminDashboard() {
   const triggerRefund = async (user:UserRow) => {
     setBusyAction(`refund:${user.id}`);
     try {
-      await adminRequest('/v1/admin/refunds', { method:'POST', body:JSON.stringify({ user_id:user.id, credits:25, reason:'Failed form-fill job' }) });
-      setUsers(items => items.map(item => item.id === user.id ? { ...item, credits:item.credits + 25 } : item));
+      if (!user.lastTransactionId) throw new Error('No refundable transaction is recorded for this user.');
+      if (!window.confirm(`Create and confirm a refund for transaction ${user.lastTransactionId}?`)) return;
+      const preview = await adminRequest<{preview_id:string}>('/v1/admin/assistant/preview', { method:'POST', body:JSON.stringify({action:'refund', payload:{transaction_id:user.lastTransactionId, reason:'Admin-confirmed failed transaction refund'}}) });
+      await adminRequest(`/v1/admin/assistant/confirm/${encodeURIComponent(preview.preview_id)}`, { method:'POST' });
       setRefundState('success');
-      pushLog(`CO-PILOT: ✓ Instant refund +25 cr issued for ${user.id}.`);
+      pushLog(`CO-PILOT: ✓ Refund confirmed for transaction ${user.lastTransactionId}.`);
       setStatus(`Refund issued to ${user.name}.`);
     } catch (error) { setRefundState('error'); setStatus(error instanceof Error ? error.message : 'Refund request failed.'); }
     finally { setBusyAction(''); }
@@ -189,24 +196,42 @@ export default function AdminDashboard() {
     finally { setBusyAction(''); }
   };
 
-  const executeCommand = () => {
+  const reconcilePayments = async () => {
+    setBusyAction('reconcile');
+    try {
+      const result = await adminRequest<{matched:number; expired:number}>('/v1/admin/payments/reconcile', {method:'POST'});
+      pushLog(`CO-PILOT: reconciliation matched ${result.matched}; expired ${result.expired}.`);
+    } catch (error) { setStatus(error instanceof Error ? error.message : 'Payment reconciliation failed.'); }
+    finally { setBusyAction(''); }
+  };
+
+  const checkWebsite = async (website:WebsiteHealth) => {
+    setBusyAction(`health:${website.website_id}`);
+    try {
+      const result = await adminRequest<{health_status:string}>(`/v1/admin/websites/${encodeURIComponent(website.website_id)}/health-check`, {method:'POST'});
+      setWebsites(items => items.map(item => item.website_id === website.website_id ? {...item, health_status:result.health_status} : item));
+    } catch (error) { setStatus(error instanceof Error ? error.message : 'Website health check failed.'); }
+    finally { setBusyAction(''); }
+  };
+
+  const executeCommand = async () => {
     if (!command.trim()) return;
     const current = command.trim();
     pushLog(`ADMIN: ${current}`);
-    if (/freeze/i.test(current)) setFreeze(true);
-    if (/maintenance on/i.test(current)) toggleMaintenance(true);
-    if (/maintenance off/i.test(current)) toggleMaintenance(false);
-    setTimeout(() => pushLog(`CO-PILOT: ✓ Command accepted · ${current}`), 80);
+    try {
+      const result = await adminRequest<{answer:string; summary:Record<string,number>}>('/v1/admin/assistant/query', {method:'POST', body:JSON.stringify({query:current})});
+      pushLog(`CO-PILOT: ${result.answer} ${JSON.stringify(result.summary)}`);
+    } catch (error) { setStatus(error instanceof Error ? error.message : 'Admin assistant unavailable.'); }
     setCommand('');
   };
 
   return <div className="fw-admin min-h-screen bg-[#0e0e0e] text-[#e5e2e1] font-sans">
     <header className="fw-admin-header">
-      <div className="fw-admin-brand"><div className="fw-admin-logo">↦</div><div><div className="fw-admin-brand-name">FORMWISE <span>ENTERPRISE AI</span></div><div className="fw-admin-meta"><i /> Command & Control / Super Admin · ROOT_SYS 0x00_SUPER</div></div></div>
+      <div className="fw-admin-brand"><div className="fw-admin-logo">↦</div><div><div className="fw-admin-brand-name">FORMWISE <span>ENTERPRISE AI</span></div><div className="fw-admin-meta"><i /> Command & Control / Super Admin · server-authorized</div></div></div>
       <div className="fw-admin-controls">
         <div className="fw-header-control fw-header-danger"><span>EMERGENCY FREEZE</span><Toggle checked={freeze} onChange={setFreeze} danger /></div>
         <div className="fw-header-control"><span>MAINTENANCE MODE</span><Toggle checked={maintenance} onChange={toggleMaintenance} /></div>
-        <div className="fw-admin-status"><i /> CLUSTER: HEALTHY <b>18ms p95</b></div>
+        <div className="fw-admin-status"><i /> HEALTH STATUS <b>API-REPORTED</b></div>
       </div>
     </header>
 
@@ -221,27 +246,31 @@ export default function AdminDashboard() {
       </section>
 
       {tab === 'cockpit' && <section className="space-y-5">
-        <div className="grid gap-4 xl:grid-cols-4">
-          <Metric label="PLATFORM REVENUE (MTD)" value="₹48,92,450" note="↗ +28.4% · run-rate ₹1,63,080/day" />
-          <Metric label="ARR VELOCITY" value="₹5.87 Cr" note="14 enterprise accounts · on-track" accent="cyan" />
-          <Metric label="ACTIVE BROWSER WORKERS" value="142 / 200" note="71% saturation · headless Chromium v124" />
-          <Metric label="ZERO-TRUST GUARD" value="99.98%" note="SELF-HEALING UPTIME · SHA256 ATTESTED" accent="cyan" />
+        <div className="grid gap-4 xl:grid-cols-5">
+          <Metric label="REGISTERED USERS" value={summary ? summary.users.toLocaleString('en-IN') : '—'} note={summary ? `${summary.audit_events.toLocaleString('en-IN')} audit events recorded` : 'Waiting for authenticated admin API'} />
+          <Metric label="WEBSITE REGISTRY" value={summary ? `${summary.enabled_websites} / ${summary.websites}` : '—'} note="Enabled / registered websites" accent="cyan" />
+          <Metric label="AI TOKENS" value={aiUsage.total_tokens.toLocaleString('en-IN')} note={`Recorded cost ${aiUsage.total_cost}`} accent="cyan" />
+          <Metric label="TASKS" value={summary ? String(summary.tasks ?? '—') : '—'} note="Database-backed task count" />
+          <Metric label="SYSTEM HEALTH" value={status.includes('LIVE') ? 'LIVE' : '—'} note="Readiness and admin API telemetry" accent="cyan" />
         </div>
         <div className="grid gap-5 xl:grid-cols-[1.5fr_1fr]">
-          <div className="fw-panel"><SectionHeader eyebrow="USER MATRIX DATA TABLE" title="User Ledger · Real-Time" action={<span className="fw-chip">5 USERS IN VIEW</span>} />
+          <div className="fw-panel"><SectionHeader eyebrow="USER MATRIX DATA TABLE" title="User Ledger · Real-Time" action={<div className="flex gap-2"><button className="fw-btn fw-btn-secondary" onClick={reconcilePayments} disabled={busyAction==='reconcile'}>{busyAction==='reconcile'?'RECONCILING…':'RECONCILE PAYMENTS'}</button><span className="fw-chip">{users.length} USERS IN VIEW</span></div>} />
             <div className="overflow-x-auto"><table className="fw-table"><thead><tr><th>USER</th><th>PLAN</th><th>CREDITS</th><th>STATUS</th><th>SPEND</th><th>LAST JOB</th><th>ACTION</th></tr></thead><tbody>{users.map(user => <tr key={user.id}><td><strong>{user.name}</strong><small>{user.id}</small></td><td>{user.plan}</td><td className="fw-number">{user.credits.toLocaleString('en-IN')}</td><td><span className={`fw-state ${user.status === 'WATCH' ? 'watch':''}`}>{user.status}</span></td><td>{user.spend}</td><td>{user.lastJob}</td><td><div className="flex gap-2"><button disabled={busyAction===`bonus:${user.id}`} onClick={()=>grantBonus(user)} className="fw-pill">{busyAction===`bonus:${user.id}`?'…':'Grant Bonus'}</button><button disabled={busyAction===`refund:${user.id}`} onClick={()=>triggerRefund(user)} className="fw-pill fw-pill-cyan">{busyAction===`refund:${user.id}`?'…':'Trigger Refund'}</button></div></td></tr>)}</tbody></table></div>
           </div>
-          <div className="fw-panel"><SectionHeader eyebrow="ZERO-TRUST GUARD & INTEGRITY" title="System Health" action={<span className="fw-state">ALL SYSTEMS OPERATIONAL</span>} /><div className="fw-health-grid"><div><span>Attestation</span><strong>SHA256:7f9a...c03b</strong></div><div><span>AI provider vault</span><strong>AES-256 / HSM</strong></div><div><span>Plaintext leakage</span><strong>0 detected</strong></div><div><span>Worker isolation</span><strong>Headless Chromium</strong></div></div><div className="fw-health-meter"><div><span>CPU · 38%</span><i style={{width:'38%'}} /></div><div><span>Memory · 57%</span><i style={{width:'57%'}} /></div><div><span>QPS · 124/s</span><i style={{width:'76%'}} /></div></div></div>
+          <div className="fw-panel"><SectionHeader eyebrow="ZERO-TRUST GUARD & INTEGRITY" title="System Health" action={<span className="fw-state">{status}</span>} /><div className="fw-health-grid"><div><span>Database</span><strong>Admin API checked</strong></div><div><span>AI usage ledger</span><strong>{aiUsage.total_tokens.toLocaleString('en-IN')} tokens</strong></div><div><span>Browser sessions</span><strong>{summary?.browser_sessions ?? '—'}</strong></div><div><span>Tasks</span><strong>{summary?.tasks ?? '—'}</strong></div></div><div className="fw-health-meter"><div><span>Metrics</span><i style={{width:summary ? '100%':'15%'}} /></div></div></div>
         </div>
+        <div className="fw-panel"><SectionHeader eyebrow="VERIFIED WEBSITE HEALTH" title="Official Registry Status" action={<span className="fw-chip">{websites.length} REGISTERED</span>} /><div className="space-y-2">{websites.map(website => <div key={website.website_id} className="flex items-center justify-between gap-3 border-b border-white/10 py-2"><span>{website.name} · v{website.version}</span><span className="flex items-center gap-2"><b>{website.verified ? website.health_status : 'unverified'}</b><button className="fw-pill" onClick={() => checkWebsite(website)} disabled={busyAction===`health:${website.website_id}`}>CHECK</button></span></div>)}</div></div>
       </section>}
 
       {tab === 'vault' && <section className="space-y-5">
-        <div className="fw-panel"><SectionHeader eyebrow="20+ ENCRYPTED LLM API VAULT MATRIX" title="Secure Vaults Gateway · HSM Key Enclaves" action={<div className="flex gap-2"><button className="fw-btn fw-btn-secondary" onClick={()=>pushLog('CO-PILOT: ✓ Sync All Enclaves initiated.')}>SYNC ALL ENCLAVES</button><button className="fw-btn fw-btn-danger" onClick={()=>setFreeze(true)}>KEY REVOCATION</button></div>} />
+        <div className="fw-panel"><SectionHeader eyebrow="AI PROVIDER POLICY · LIVE DATABASE" title="Secure Vaults Gateway · HSM Key Enclaves" action={<div className="flex gap-2"><span className="fw-chip">{liveProviders.length} PROVIDERS · {providerPolicy.length} POLICIES</span><button className="fw-btn fw-btn-secondary" onClick={()=>pushLog('CO-PILOT: Provider policy is server-authoritative.')}>REFRESH POLICY</button></div>} />
+          {providerPolicy.length > 0 && <div className="fw-callout success">{providerPolicy.map(policy => `${policy.provider}: priority ${policy.priority} · ${policy.enabled ? 'enabled':'disabled'} · ${policy.status || 'health pending'}`).join(' | ')}</div>}
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">{providers.map(provider => <div key={provider.name} className="fw-vault-card"><div className="fw-provider-head"><span className="fw-provider-icon">{provider.short.slice(0,3)}</span><div><strong>{provider.name}</strong><span>{provider.tier}</span></div><span className={provider.configured ? 'fw-state':'fw-state fw-state-muted'}>{provider.configured?'CONFIGURED':'EMPTY'}</span></div><div className="fw-secret-row"><code>{provider.configured ? provider.masked : 'Enter provider API key…'}</code><button onClick={()=>{setSelectedProvider(provider);setKeyValue('')}}>{provider.configured?'ROTATE':'CONFIGURE'}</button></div><div className="fw-vault-foot"><span>Latency</span><b>{provider.latency}</b><span>{provider.configured?'AES-256 encrypted':'Awaiting secure input'}</span></div></div>)}</div>
         </div>
         <div className="grid gap-5 xl:grid-cols-[1.3fr_.9fr]">
           <div className="fw-panel"><SectionHeader eyebrow="5-ENCLAVE FAILOVER" title="Multi-Cloud S3 Storage Gateway" action={<span className="fw-chip">FAILOVER: ARMED</span>} /><div className="space-y-2">{STORAGE_NODES.map(node => <div className="fw-node-row" key={node.name}><div className="fw-priority">P{node.priority}</div><div className="min-w-0 flex-1"><strong>{node.name}</strong><span>{node.bucket}</span></div><span>{node.ping}</span><span className="fw-state">{node.status}</span></div>)}</div></div>
-          <div className="fw-panel"><SectionHeader eyebrow="AUTHENTICATION & IDENTITY GATEWAYS" title="4-Channel Auth Router" action={<span className="fw-chip">{authEnabled.filter(Boolean).length} OF 4 OPERATIONAL</span>} /><div className="space-y-3">{AUTH_GATEWAYS.map(([name,sub],i)=><div key={String(name)} className="fw-auth-row"><div><strong>{name}</strong><span>{sub}</span></div><Toggle checked={authEnabled[i]} onChange={value=>setAuthEnabled(items=>items.map((v,j)=>j===i?value:v))}/></div>)}</div></div>
+          <div className="fw-panel"><SectionHeader eyebrow="AUTHENTICATION & IDENTITY GATEWAYS" title="Configured Auth Providers" action={<span className="fw-chip">{authProviders.length} PROVIDERS</span>} /><div className="space-y-3">{authProviders.length ? authProviders.map(provider=><div key={provider.provider} className="fw-auth-row"><div><strong>{provider.display_name}</strong><span>{provider.provider} · {provider.health}</span></div><span className="fw-state">{provider.enabled?'ENABLED':'DISABLED'}</span></div>) : <div className="fw-callout">No authentication provider registry data available.</div>}</div></div>
+          <div className="fw-panel"><SectionHeader eyebrow="PRIVATE STORAGE PROVIDERS" title="Capacity and Failover Registry" action={<span className="fw-chip">{storageProviders.length} PROVIDERS</span>} /><div className="space-y-3">{storageProviders.length ? storageProviders.map(provider=><div key={provider.provider} className="fw-auth-row"><div><strong>{provider.display_name}</strong><span>{provider.provider} · {provider.health}</span></div><span className="fw-state">{provider.enabled?'ENABLED':'DISABLED'}</span></div>) : <div className="fw-callout">No storage provider registry data available.</div>}</div></div>
         </div>
         {selectedProvider && <div className="fw-modal-backdrop"><div className="fw-modal"><div className="fw-eyebrow">FERNET-AES-256 · SERVER-SIDE APPLICATION LAYER</div><h3>{selectedProvider.configured ? 'Rotate' : 'Configure'} {selectedProvider.name}</h3><p>Raw credentials are submitted only over the authenticated admin channel and encrypted server-side before persistence.</p><input type="password" autoFocus value={keyValue} onChange={e=>setKeyValue(e.target.value)} placeholder="Paste provider API key"/><div className="flex justify-end gap-2"><button className="fw-btn fw-btn-secondary" onClick={()=>setSelectedProvider(null)}>CANCEL</button><button className="fw-btn fw-btn-primary" disabled={busyAction.startsWith('provider:') || !keyValue.trim()} onClick={updateProviderKey}>{busyAction.startsWith('provider:')?'SAVING…':'SAVE ENCRYPTED KEY'}</button></div></div></div>}
       </section>}
@@ -249,8 +278,8 @@ export default function AdminDashboard() {
       {tab === 'growth' && <section className="grid gap-5 xl:grid-cols-2">
         <div className="fw-panel"><SectionHeader eyebrow="SMART ADVERTISING SYSTEM & BANNER STUDIO" title="SSR Zero-CLS Banner Controller" action={<Toggle checked={bannerEnabled} onChange={setBannerEnabled}/>} /><div className={`fw-banner-fields ${bannerEnabled ? 'is-open':''}`}><label>GLOBAL HEADER BANNER ASSET URL<input value={bannerUrl} onChange={e=>setBannerUrl(e.target.value)}/></label><label>TARGET REDIRECT URL<input value={bannerLink} onChange={e=>setBannerLink(e.target.value)}/></label><div className="fw-banner-preview"><div className="fw-banner-image" style={{backgroundImage:`url(${bannerUrl})`}}><span>1200 × 90 · LIVE PREVIEW</span></div></div><p>Telemetry guarantee: disabling the banner removes the grid track itself, leaving no padding, margin, spacer, or reserved min-height.</p><div className="flex gap-2"><button className="fw-btn fw-btn-secondary" onClick={()=>pushLog('CO-PILOT: ✓ In-app banner render test requested.')}>TEST IN-APP RENDER</button><button className="fw-btn fw-btn-primary" onClick={()=>pushLog(`CO-PILOT: ✓ Banner broadcast staged → ${bannerLink}`)}>SAVE & BROADCAST</button></div></div></div>
         <div className="fw-panel"><SectionHeader eyebrow="COUPON CODE ENGINE & PROMO GENERATOR" title="Deterministic Discount Ledger" action={<span className="fw-state">LIVE REDEMPTIONS · 3 ACTIVE</span>} /><div className="grid gap-3 sm:grid-cols-2"><label>CODE<input value={coupon.code} onChange={e=>setCoupon({...coupon,code:e.target.value.toUpperCase()})}/></label><label>REWARD TYPE<select value={coupon.type} onChange={e=>setCoupon({...coupon,type:e.target.value})}><option value="percentage">Percentage (%)</option><option value="fixed">Fixed INR Amount (₹)</option><option value="credits">Free Wallet Credits</option></select></label><label>REWARD VALUE<input type="number" min="0" value={coupon.value} onChange={e=>setCoupon({...coupon,value:e.target.value})}/></label><label>MAX REDEMPTIONS<input type="number" min="1" value={coupon.maxUses} onChange={e=>setCoupon({...coupon,maxUses:e.target.value})}/></label><label className="sm:col-span-2">EXPIRY DATE<input type="date" value={coupon.expiry} onChange={e=>setCoupon({...coupon,expiry:e.target.value})}/></label></div><div className="fw-promo-actions"><button className="fw-btn fw-btn-primary" disabled={busyAction==='coupon'} onClick={deployCoupon}>{busyAction==='coupon'?'DEPLOYING…':'⚡ GENERATE & DEPLOY CODE'}</button><div className="fw-chip">HASH · 0x99F_PROMO</div></div></div>
-        <div className="fw-panel"><SectionHeader eyebrow="VIRAL REFERRAL GROWTH LOOP" title="K-Factor · 1.42×" action={<button className="fw-btn fw-btn-secondary" onClick={()=>pushLog('CO-PILOT: ✓ Referral rules staged for deterministic review.')}>UPDATE LOGIC</button>} /><div className="fw-slider-row"><div><span>Referee Welcome Bonus</span><strong>{referee} Credits</strong></div><input type="range" min="5" max="100" step="5" value={referee} onChange={e=>setReferee(Number(e.target.value))}/><small>5 cr → 100 cr</small></div><div className="fw-slider-row"><div><span>Referrer Claimable Payout</span><strong>{referrer} Credits</strong></div><input type="range" min="0" max="50" step="5" value={referrer} onChange={e=>setReferrer(Number(e.target.value))}/><small>0 cr → 50 cr</small></div><div className="grid grid-cols-3 gap-3 pt-4"><div className="fw-mini-stat"><span>Converted</span><strong>4,820</strong></div><div className="fw-mini-stat"><span>Attributed ARR</span><strong>₹2,41,000</strong></div><div className="fw-mini-stat"><span>Fraud Drop</span><strong>0.04%</strong></div></div><div className="fw-defense">DEVICE FINGERPRINT + SMS ENCLAVE BINDING · STRICT ENFORCEMENT · 30D WINDOW</div></div>
-        <div className="fw-panel"><SectionHeader eyebrow="DISPUTE & CREDIT REFUND CONTROLLER" title="Instant Wallet Rollback" action={<span className="fw-chip">ZERO-WAIT ROLLBACK</span>} /><div className="fw-refund-search"><input value={refundSearch} onChange={e=>setRefundSearch(e.target.value.toUpperCase())} placeholder="Lookup user ID"/><button className="fw-btn fw-btn-secondary" onClick={()=>setRefundState('idle')}>LOOKUP</button></div><div className="fw-dispute-card"><div><span>{selectedUser.id} · {selectedUser.name}</span><strong>FAILED (504 TIMEOUT)</strong><small>Target Form: {selectedUser.lastJob}</small></div><div className="fw-credit-reversal">-25 Compute Credits</div><button disabled={busyAction.startsWith('refund:')} className="fw-btn fw-btn-danger" onClick={()=>triggerRefund(selectedUser)}>{busyAction.startsWith('refund:')?'ROLLING BACK…':'↩ TRIGGER INSTANT CREDIT REFUND (+25 cr)'}</button></div>{refundState==='success'&&<div className="fw-callout success">REFUND CONFIRMED · wallet balance and audit ledger updated.</div>}{refundState==='error'&&<div className="fw-callout error">REFUND REQUEST FAILED · verify admin credentials and backend entitlement.</div>}<div className="fw-recent-refunds"><div><span>USR-84192</span><b>USCIS I-9 Form Upload</b><em>REFUNDED (+25 cr)</em></div><div><span>USR-77319</span><b>IRS Tax Stamp Verification</b><em>REFUNDED (+15 cr)</em></div></div></div>
+        <div className="fw-panel"><SectionHeader eyebrow="VIRAL REFERRAL GROWTH LOOP" title="Referral Configuration" action={<button className="fw-btn fw-btn-secondary" onClick={()=>pushLog('CO-PILOT: ✓ Referral rules staged for deterministic review.')}>UPDATE LOGIC</button>} /><div className="fw-slider-row"><div><span>Referee Welcome Bonus</span><strong>{referee} Credits</strong></div><input type="range" min="5" max="100" step="5" value={referee} onChange={e=>setReferee(Number(e.target.value))}/><small>5 cr → 100 cr</small></div><div className="fw-slider-row"><div><span>Referrer Claimable Payout</span><strong>{referrer} Credits</strong></div><input type="range" min="0" max="50" step="5" value={referrer} onChange={e=>setReferrer(Number(e.target.value))}/><small>0 cr → 50 cr</small></div><div className="fw-callout">Live audience data: {marketingInsights ? `${marketingInsights.active_users_30d} active users, ${marketingInsights.new_users_30d} new users and ${marketingInsights.tasks_30d} tasks in the last 30 days.` : 'Waiting for marketing insights API.'}</div></div>
+        <div className="fw-panel"><SectionHeader eyebrow="DISPUTE & CREDIT REFUND CONTROLLER" title="Instant Wallet Rollback" action={<span className="fw-chip">ZERO-WAIT ROLLBACK</span>} /><div className="fw-refund-search"><input value={refundSearch} onChange={e=>setRefundSearch(e.target.value.toUpperCase())} placeholder="Lookup user ID"/><button className="fw-btn fw-btn-secondary" onClick={()=>setRefundState('idle')}>LOOKUP</button></div><div className="fw-dispute-card"><div><span>{selectedUser.id} · {selectedUser.name}</span><strong>FAILED (504 TIMEOUT)</strong><small>Target Form: {selectedUser.lastJob}</small></div><div className="fw-credit-reversal">-25 Compute Credits</div><button disabled={busyAction.startsWith('refund:')} className="fw-btn fw-btn-danger" onClick={()=>triggerRefund(selectedUser)}>{busyAction.startsWith('refund:')?'ROLLING BACK…':'↩ TRIGGER INSTANT CREDIT REFUND (+25 cr)'}</button></div>{refundState==='success'&&<div className="fw-callout success">REFUND CONFIRMED · wallet balance and audit ledger updated.</div>}{refundState==='error'&&<div className="fw-callout error">REFUND REQUEST FAILED · verify admin credentials and backend entitlement.</div>}<div className="fw-callout">Refund history is loaded from the payment ledger; no synthetic refund rows are displayed.</div></div>
       </section>}
 
       <div className="fw-bottom-status"><span><i /> {status}</span><span>SERVER-AUTHORITATIVE SAFEGUARDS · ZERO-PLAINTEXT TELEMETRY</span></div>
